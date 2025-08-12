@@ -40,7 +40,7 @@ COL_CODE   = 3
 COL_RARITY = 4
 COL_BOOST  = 5
 COL_PRICE  = 7
-COL_IMGURL = 10
+COL_IMGURL = 9
 # ========================
 
 # ---- ロゴ探索 ----
