@@ -134,7 +134,8 @@ def ensure_thumb(url: str) -> str|None:
     THUMB_DIR.mkdir(parents=True, exist_ok=True)
     fname = url_to_hash(url) + ".webp"
     outp = THUMB_DIR / fname
-    if outp.exists(): return f"assets/thumbs/{fname}"
+    if outp.exists(): return f"../assets/thumbs/{fname}"
+
     if not (requests and Image):
         # 依存が無い場合はスキップしてフルURLを使わせる
         return None
@@ -317,11 +318,15 @@ base_js = r"""
     });
   }
 
-  function cardHTML_img(it){
-    const nameEsc = escHtml(it.name||'');
-    const full = it.image?it.image:'';
-    const thumb = it.thumb || full;
-    return `
+function cardHTML_img(it){
+  const nameEsc = escHtml(it.name||'');
+  const full = it.image?it.image:'';
+  let thumb = it.thumb || full;
+  // ← ここが修正点：相対パスなら ../ を補正
+  if (thumb && !/^https?:\/\//.test(thumb) && !thumb.startsWith('../')) {
+    thumb = '../' + thumb;
+  }
+  return `
   <article class="card">
     <div class="th" data-full="${full}">
       <img
@@ -336,7 +341,7 @@ base_js = r"""
       <div class="p"><span class="mx">${fmtYen(it.price)}</span></div>
     </div>
   </article>`;
-  }
+}
 
   function cardHTML_list(it){
     const nameEsc = escHtml(it.name||'');
