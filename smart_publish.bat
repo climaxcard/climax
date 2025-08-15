@@ -9,8 +9,8 @@ set "PER_PAGE=80"
 
 REM Excel 候補（どれか存在するものを採用）
 set "EXCEL_DEFAULT=buylist.xlsx"
-set "EXCEL_ALT=買取読み込みファイル.xlsx"
-set "EXCEL_FALLBACK=C:\Users\user\Desktop\デュエマ買取表\買取読み込みファイル.xlsx"
+set "EXCEL_ALT=buylist.xlsx"
+set "EXCEL_FALLBACK=C:\Users\user\Desktop\デュエマ買取表\buylist.xlsx"
 
 REM 既定：サムネあり＆Gitあり
 set "BUILD_THUMBS=1"
