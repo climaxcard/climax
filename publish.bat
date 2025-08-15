@@ -1,28 +1,29 @@
 @echo off
-setlocal ENABLEDELAYEDEXPANSION
+setlocal
 cd /d "%~dp0"
 
-REM ===== 設定 =====
-set "PY=%LocalAppData%\Programs\Python\Python313\python.exe"
-set "REPO_URL=https://github.com/climaxcard/climax.git"
-
-REM ===== Pythonチェック & 依存導入 =====
-if not exist "%PY%" (
-  echo [NG] Python not found: %PY%
-  echo Python 3.13 をインストールしてください。
-  pause & exit /b 1
+rem --- Git ロック掃除 ---
+if exist ".git\index.lock" del /f /q ".git\index.lock"
+for %%L in (".git\shallow.lock" ".git\packed-refs.lock" ".git\logs\HEAD.lock") do (
+  if exist "%%~L" del /f /q "%%~L"
 )
-echo [*] Installing deps...
-"%PY%" -m pip install -q --disable-pip-version-check pandas openpyxl || (
-  echo [NG] pip install failed
-  pause & exit /b 1
-)
+git gc --prune=now >nul 2>&1
 
-REM ===== 生成 =====
-echo [*] Generate docs...
-"%PY%" gen_buylist.py || (
-  echo [NG] 生成失敗。上のエラーを確認してください。
-  pause & exit /b 1
+rem --- ここからあなたの生成処理 ---
+rem pythonや生成コマンドなど（既存の “[*] Installing deps...” 以降）
+
+rem --- コミット＆push（リモートが進んでても自動追従） ---
+git add -A || goto :gitfail
+git commit -m "update buylist %date% %time:~0,5%" || echo [i] 変更なし or commit失敗
+git pull --rebase --autostash origin main || goto :gitfail
+git push origin main || goto :gitfail
+echo [OK] push 完了
+goto :eof
+
+:gitfail
+echo [NG] git 処理でエラー。ロックや競合を確認してください。
+exit /b 1
+
 )
 
 REM ===== Git 初期化（初回のみ）=====
