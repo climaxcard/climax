@@ -5,6 +5,7 @@ cd /d "%~dp0"
 REM ===== 設定 =====
 set "PY=C:\Users\user\AppData\Local\Programs\Python\Python313\python.exe"
 set "EXCEL_PATH=buylist.xlsx"
+set "EXCEL_FALLBACK=C:\Users\user\Desktop\デュエマ買取表\buylist.xlsx"
 set "OUT_DIR=docs"
 set "PER_PAGE=80"
 

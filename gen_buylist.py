@@ -25,7 +25,7 @@ except Exception:
     Image = None
 
 # ========= 設定 =========
-DEFAULT_EXCEL = "data/買取読み込みファイル.xlsx"
+DEFAULT_EXCEL = "data/buylist.xlsx"
 FALLBACK_WINDOWS = r"C:\Users\user\Desktop\buylist.xlsx"
 
 EXCEL_PATH = os.getenv("EXCEL_PATH", DEFAULT_EXCEL)
