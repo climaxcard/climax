@@ -273,7 +273,7 @@ nav.simple strong{color:#111;user-select:none}
 small.note{color:var(--muted)}
 """
 
-# ========= JS（欄ごと一致＋スマホ最適化＋遅延読込） =========
+# ========= JS（欄ごと一致＋スマホ最適化＋遅延読込＋画像ON/OFF修正） =========
 base_js = r"""
 (function(){
   const header = document.querySelector('header');
@@ -316,13 +316,15 @@ base_js = r"""
   const eager1 = pick(4, 8, 16);
   const eager2 = pick(8, 16, 32);
 
-  // 初回はモバイル/遅回線なら画像OFF
+  // 初回はモバイル/遅回線なら画像OFF。旧 'true'/'false' を '1'/'0' に正規化
   let showImages;
-  const saved = localStorage.getItem('showImages');
+  let saved = localStorage.getItem('showImages');
+  if (saved === 'true')  { localStorage.setItem('showImages','1'); saved = '1'; }
+  if (saved === 'false') { localStorage.setItem('showImages','0'); saved = '0'; }
   if (saved === null) showImages = !(isMobile || slowNet);
-  else showImages = saved === '1';
+  else showImages = (saved === '1');
 
-  // クエリだけ軽く正規化（データ側はPythonで正規化済みだが欄ごと比較用に再利用）
+  // クエリ正規化
   const SEP_RE = /[\s\u30FB\u00B7·/／\-_—–−]+/g;
   function kataToHira(str){ return (str||'').replace(/[\u30A1-\u30FA]/g, ch => String.fromCharCode(ch.charCodeAt(0)-0x60)); }
   const kanjiReadingMap = { "伝説":"でんせつ" };
@@ -338,11 +340,7 @@ base_js = r"""
   function fmtYen(n){ return (n==null||n==='')?'-':('¥'+parseInt(n,10).toLocaleString()); }
   function escHtml(s){
     return (s||'').replace(/[&<>\"']/g, m => ({
-      "&":"&amp;",
-      "<":"&lt;",
-      ">":"&gt;",
-      "\"":"&quot;",
-      "'":"&#39;"
+      "&":"&amp;", "<":"&lt;", ">":"&gt;", "\"":"&quot;", "'":"&#39;"
     }[m]));
   }
 
@@ -505,18 +503,34 @@ base_js = r"""
   }
 
   function setActiveSort(){
-    btnDesc.classList.toggle('active', currentSort==='desc');
-    btnAsc .classList.toggle('active', currentSort==='asc');
-    btnNone.classList.toggle('active', currentSort===null);
+    btnDesc?.setAttribute('aria-pressed', currentSort==='desc' ? 'true':'false');
+    btnAsc ?.setAttribute('aria-pressed', currentSort==='asc'  ? 'true':'false');
+    btnNone?.setAttribute('aria-pressed', currentSort===null    ? 'true':'false');
+    btnDesc?.classList.toggle('active', currentSort==='desc');
+    btnAsc ?.classList.toggle('active', currentSort==='asc');
+    btnNone?.classList.toggle('active', currentSort===null);
   }
   function setImgBtn(){
+    if (!btnImg) return;
     btnImg.textContent = showImages ? '画像OFF' : '画像ON';
     btnImg.classList.toggle('active', showImages);
+    btnImg.setAttribute('aria-pressed', showImages ? 'true' : 'false');
+  }
+
+  // トグルは保存形式も更新、IOも安全に切替
+  function toggleImages(e){
+    if (e) { e.preventDefault(); e.stopPropagation(); }
+    showImages = !showImages;
+    localStorage.setItem('showImages', showImages ? '1' : '0');
+    try { io && io.disconnect(); } catch(_) {}
+    setImgBtn();
+    render();
   }
 
   btnDesc?.addEventListener('click', ()=>{ currentSort = (currentSort==='desc') ? null : 'desc'; setActiveSort(); apply(); });
   btnAsc ?.addEventListener('click', ()=>{ currentSort = (currentSort==='asc') ? null : 'asc'; setActiveSort(); apply(); });
   btnNone?.addEventListener('click', ()=>{ currentSort = null; setActiveSort(); apply(); });
+  btnImg ?.addEventListener('click', toggleImages);
 
   const DEBOUNCE = (isMobile || slowNet || cores <= 4) ? 240 : 120;
   function onInputDebounced(el){ el.addEventListener('input', ()=>{ clearTimeout(el._t); el._t=setTimeout(apply,DEBOUNCE); }); }
@@ -566,7 +580,7 @@ def write_cards_js(df: pd.DataFrame) -> str:
     (assets / "cards.min.js").write_text("window.__CARDS__="+payload, encoding="utf-8")
     return ver
 
-# ===== HTML（JSONは外部JSを defer なしで先読み） =====
+# ===== HTML（JSONは外部JSを先読み、ロジックはdefer） =====
 def html_page(title: str, js_source: str, logo_uri: str, cards_ver: str) -> str:
     shop_svg = "<svg viewBox='0 0 24 24' aria-hidden='true' fill='currentColor'><path d='M3 9.5V8l2.2-3.6c.3-.5.6-.7 1-.7h11.6c.4 0 .7.2.9.6L21 8v1.5c0 1-.8 1.8-1.8 1.8-.9 0-1.6-.6-1.8-1.4-.2.8-.9 1.4-1.8 1.4s-1.6-.6-1.8-1.4c-.2.8-.9 1.4-1.8 1.4s-1.6-.6-1.8-1.4c-.2.8-.9 1.4-1.8 1.4s-1.6-.6-1.8-1.4c-.2.8-.9 1.4-1.8 1.4C3.8 11.3 3 10.5 3 9.5zM5 12.5h14V20c0 .6-.4 1-1 1H6c-.6 0-1-.4-1-1v-7.5zm4 1.5v5h6v-5H9zM6.3 5.2 5 7.5h14l-1.3-2.3H6.3z'/></svg>"
     login_svg= "<svg viewBox='0 0 24 24' aria-hidden='true' fill='currentColor'><path d='M12 12a5 5 0 1 0-5-5 5 5 0 0 0 5 5zm0 2c-4.418 0-8 2.239-8 5v2h16v-2c0-2.761-3.582-5-8-5z'/></svg>"
@@ -598,22 +612,21 @@ def html_page(title: str, js_source: str, logo_uri: str, cards_ver: str) -> str:
     parts.append("  <input id='packQ'   class='search' placeholder='弾：例 DM25RP1, 邪神VS邪神 等'>")
     parts.append("  <input id='rarityQ' class='search' placeholder='レアリティ：SR/VR 等'>")
     parts.append("  <div class='btns'>")
-    parts.append("    <button id='btnPriceDesc' class='btn' aria-pressed='false'>価格高い順</button>")
-    parts.append("    <button id='btnPriceAsc'  class='btn' aria-pressed='false'>価格低い順</button>")
-    parts.append("    <button id='btnSortClear' class='btn' aria-pressed='false'>標準順</button>")
-    parts.append("    <button id='btnToggleImages' class='btn'>画像ON</button>")
+    parts.append("    <button id='btnPriceDesc' class='btn' type='button' aria-pressed='false'>価格高い順</button>")
+    parts.append("    <button id='btnPriceAsc'  class='btn' type='button' aria-pressed='false'>価格低い順</button>")
+    parts.append("    <button id='btnSortClear' class='btn' type='button' aria-pressed='false'>標準順</button>")
+    parts.append("    <button id='btnToggleImages' class='btn' type='button'>画像ON</button>")
     parts.append("  </div></div>")
     parts.append("  <nav class='simple'></nav><div id='grid' class='grid grid-img'></div><nav class='simple'></nav>")
     parts.append("  <small class='note'>このページ内のデータのみで検索・並び替え・ページングできます。画像クリックで拡大表示。</small>")
     parts.append("</main>")
 
-    # データは defer なしで先に評価
+    # データは先読み（defer なし）
     parts.append(f"<script src='../assets/cards.min.js?v={cards_ver}'></script>")
-    # その場で簡易チェック（読めてなければ赤い警告を表示）
     parts.append("<script>if(!Array.isArray(window.__CARDS__)){document.write(\"<p style='color:#dc2626;padding:16px'>データが読み込めませんでした。<code>docs/assets/cards.min.js</code> の存在とパスを確認してください。</p>\");}</script>")
 
     parts.append("<div id='viewer' class='viewer'><div class='vc'><img id='viewerImg' alt=''><button id='viewerClose' class='close'>×</button></div></div>")
-    # ロジックは defer でOK
+    # ロジックは defer
     parts.append("<script defer>"); parts.append(js_source); parts.append("</script></body></html>")
     return "".join(parts)
 
