@@ -141,7 +141,7 @@ function cardHTML_img(it){
   const nameEsc = escHtml(it.name||'');
   const full = it.image?it.image:'';
   let thumb = it.thumb || full;
-  // ← ここが修正点：相対パスなら ../ を補正
+  // ← 相対パスのサムネなら一段上を指す
   if (thumb && !/^https?:\/\//.test(thumb) && !thumb.startsWith('../')) {
     thumb = '../' + thumb;
   }
@@ -161,6 +161,7 @@ function cardHTML_img(it){
     </div>
   </article>`;
 }
+
 
   function cardHTML_list(it){
     const nameEsc = escHtml(it.name||'');

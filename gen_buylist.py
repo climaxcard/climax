@@ -149,7 +149,7 @@ def ensure_thumb(url: str) -> str|None:
         im = im.resize((THUMB_W, max(1,new_h)), Image.LANCZOS)
         outp.parent.mkdir(parents=True, exist_ok=True)
         im.save(outp, "WEBP", quality=70, method=6)
-        return f"assets/thumbs/{fname}"
+        return f"../assets/thumbs/{fname}"
     except Exception:
         return None
 
@@ -322,7 +322,7 @@ function cardHTML_img(it){
   const nameEsc = escHtml(it.name||'');
   const full = it.image?it.image:'';
   let thumb = it.thumb || full;
-  // ← ここが修正点：相対パスなら ../ を補正
+  // 相対パスのサムネは1階層上を指す（docs/<mode>/pX.html だから ../assets/...）
   if (thumb && !/^https?:\/\//.test(thumb) && !thumb.startsWith('../')) {
     thumb = '../' + thumb;
   }
@@ -342,6 +342,8 @@ function cardHTML_img(it){
     </div>
   </article>`;
 }
+
+
 
   function cardHTML_list(it){
     const nameEsc = escHtml(it.name||'');
@@ -370,6 +372,13 @@ function cardHTML_img(it){
             img.src = ds;
             img.removeAttribute('data-src');
             io.unobserve(img);
+
+function eagerLoad(n=16){
+  const imgs=[...document.querySelectorAll('#grid img[data-src]')].slice(0,n);
+  imgs.forEach(img=>{
+    if(!img.src){
+      img.src = img.getAttribute('data-src');
+      img.removeAttribute('data-src');
           }
         }
       });
@@ -415,8 +424,11 @@ function cardHTML_img(it){
     });
 
     shrinkPrices(grid);
-    if (showImages) setupIO();
-  }
+if (showImages) {
+  setupIO();            // IOでの遅延読込
+  eagerLoad(16);        // ← 追加: 最初の16枚は即読み込み
+  setTimeout(()=>eagerLoad(32), 600); // ← 追加: 600ms後にもう少し
+}
 
   function apply(){
     const nameQv   = normalizeForSearch(nameQ.value||'');
