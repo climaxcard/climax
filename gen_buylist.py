@@ -318,15 +318,15 @@ base_js = r"""
     });
   }
 
-function cardHTML_img(it){
-  const nameEsc = escHtml(it.name||'');
-  const full = it.image?it.image:'';
-  let thumb = it.thumb || full;
-  // 相対パスのサムネは1階層上を指す（docs/<mode>/pX.html だから ../assets/...）
-  if (thumb && !/^https?:\/\//.test(thumb) && !thumb.startsWith('../')) {
-    thumb = '../' + thumb;
-  }
-  return `
+  // 画像カード（相対サムネは ../ を付与、404時はフル画像へフォールバック）
+  function cardHTML_img(it){
+    const nameEsc = escHtml(it.name||'');
+    const full = it.image?it.image:'';
+    let thumb = it.thumb || full;
+    if (thumb && !/^https?:\/\//.test(thumb) && !thumb.startsWith('../')) {
+      thumb = '../' + thumb;  // docs/<mode>/pX.html から見て 1階層上
+    }
+    return `
   <article class="card">
     <div class="th" data-full="${full}">
       <img
@@ -334,6 +334,7 @@ function cardHTML_img(it){
         loading="lazy" decoding="async"
         width="600" height="800"
         data-src="${thumb}" src=""
+        onerror="this.onerror=null;var p=this.closest('.th');this.src=p?p.getAttribute('data-full'):this.src;"
       >
     </div>
     <div class="b">
@@ -341,9 +342,7 @@ function cardHTML_img(it){
       <div class="p"><span class="mx">${fmtYen(it.price)}</span></div>
     </div>
   </article>`;
-}
-
-
+  }
 
   function cardHTML_list(it){
     const nameEsc = escHtml(it.name||'');
@@ -371,23 +370,24 @@ function cardHTML_img(it){
           if (ds && !img.src){
             img.src = ds;
             img.removeAttribute('data-src');
-            io.unobserve(img);
-
-function eagerLoad(n=16){
-  const imgs=[...document.querySelectorAll('#grid img[data-src]')].slice(0,n);
-  imgs.forEach(img=>{
-    if(!img.src){
-      img.src = img.getAttribute('data-src');
-      img.removeAttribute('data-src');
           }
+          io.unobserve(img);
         }
       });
     }, opts);
     document.querySelectorAll('#grid img[data-src]').forEach(img=>io.observe(img));
+    // Above-the-fold の優先度
+    document.querySelectorAll('#grid img').forEach((img, i)=>{ img.setAttribute('fetchpriority', i < 8 ? 'high' : 'low'); });
+  }
 
-    // Above-the-fold 最初の8枚は優先度UP
-    document.querySelectorAll('#grid img').forEach((img, i)=>{
-      img.setAttribute('fetchpriority', i < 8 ? 'high' : 'low');
+  // 見えてる分は即読み込み（IOの保険）
+  function eagerLoad(n=16){
+    const imgs=[...document.querySelectorAll('#grid img[data-src]')].slice(0,n);
+    imgs.forEach(img=>{
+      if(!img.src){
+        img.src = img.getAttribute('data-src');
+        img.removeAttribute('data-src');
+      }
     });
   }
 
@@ -424,11 +424,12 @@ function eagerLoad(n=16){
     });
 
     shrinkPrices(grid);
-if (showImages) {
-  setupIO();            // IOでの遅延読込
-  eagerLoad(16);        // ← 追加: 最初の16枚は即読み込み
-  setTimeout(()=>eagerLoad(32), 600); // ← 追加: 600ms後にもう少し
-}
+    if (showImages) {
+      setupIO();            // IOでの遅延読込
+      eagerLoad(16);        // 最初の16枚は即読み込み
+      setTimeout(()=>eagerLoad(32), 600); // 追い保険
+    }
+  }
 
   function apply(){
     const nameQv   = normalizeForSearch(nameQ.value||'');
@@ -483,6 +484,7 @@ if (showImages) {
   setActiveSort(); setImgBtn(); apply();
 })();
 """
+
 
 # ===== JSON埋め込みとHTML =====
 def json_for_embed(df: pd.DataFrame) -> str:
@@ -543,12 +545,11 @@ def write_mode(dir_name: str, initial_sort_js_literal: str, title_text: str):
     sub = OUT_DIR / dir_name
     sub.mkdir(parents=True, exist_ok=True)
     js = base_js.replace("__PER_PAGE__", str(PER_PAGE)).replace("__INITIAL_SORT__", initial_sort_js_literal)
-    total = len(df)
-    pages = max(1, math.ceil(total/PER_PAGE))
-    for p in range(1, pages+1):
-        html = html_page(title_text, inline_json_safe, js, LOGO_URI)
-        (sub / f"p{p}.html").write_text(html, encoding="utf-8")
-    (sub / "index.html").write_text("<meta http-equiv='refresh' content='0; url=p1.html'>", encoding="utf-8")
+
+    # ← 各モード1ファイルだけ出力（index.html）
+    html = html_page(title_text, inline_json_safe, js, LOGO_URI)
+    (sub / "index.html").write_text(html, encoding="utf-8")
+
 
 write_mode("default", "null", "デュエマ買取表")
 write_mode("price_desc", "'desc'", "デュエマ買取表（price_desc）")
