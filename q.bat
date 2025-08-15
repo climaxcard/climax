@@ -2,14 +2,18 @@
 setlocal
 cd /d "%~dp0"
 
+rem ===== Settings =====
 set "PY=C:\Users\user\AppData\Local\Programs\Python\Python313\python.exe"
-set "EXCEL_PATH=buylist.xlsx"
 set "OUT_DIR=docs"
 set "PER_PAGE=80"
 set "BUILD_THUMBS=0"
 
+rem オプション: 第1引数にExcelのフルパスを渡せます（未指定なら自動検出）
+if not "%~1"=="" set "EXCEL_PATH=%~1"
+
 "%PY%" gen_buylist.py || goto :fail
-start "" ".\docs\default\p1.html"
+
+start "" ".\docs\default\index.html"
 goto :eof
 
 :fail
