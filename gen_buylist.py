@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
 """
 デュエマ買取表 静的ページ生成（豪華版・横4列・完全オフライン・高速版）
-- 画像は軽量WebPサムネ（320px）を自家ホスト、クリック時のみフル解像度
-- IntersectionObserver + data-src + eagerLoad（見えてる分は即読込）
+- データは共通JS（assets/cards.min.js）へ分離：HTMLは各モード1枚だけ
+- JSONは短キー化（転送量削減）
+- サムネは AVIF + WebP（自家ホスト）。クリック時のみフル解像度
+- IntersectionObserver + eagerLoad（見えてる分は即読み込み）
 - サムネ404時は自動でフル画像へフォールバック
-- 1モード=1HTMLのみ（p1〜pN廃止）、データは共通JS（assets/cards.min.js）へ分離
-- EXCEL_PATH / OUT_DIR / PER_PAGE / BUILD_THUMBS を環境変数で上書き可
+- EXCEL_PATH / OUT_DIR / PER_PAGE / BUILD_THUMBS / THUMB_QUALITY / AVIF_QUALITY を環境変数で上書き可
 """
 
 from pathlib import Path
@@ -16,15 +17,19 @@ import unicodedata as ud
 import base64, mimetypes, os, sys, hashlib, io, json, glob
 
 # ========= 設定 =========
-DEFAULT_EXCEL     = "buylist.xlsx"  # まずはカレントの buylist.xlsx を探す
-DEFAULT_EXCEL_FBK = "data/buylist.xlsx"
-FALLBACK_WINDOWS  = r"C:\Users\user\Desktop\デュエマ買取表\buylist.xlsx"
+DEFAULT_EXCEL      = "buylist.xlsx"          # 最優先
+DEFAULT_EXCEL_FBK  = "data/buylist.xlsx"     # 次点
+FALLBACK_WINDOWS   = r"C:\Users\user\Desktop\デュエマ買取表\buylist.xlsx"
 
 EXCEL_PATH = os.getenv("EXCEL_PATH", DEFAULT_EXCEL)
 SHEET_NAME = os.getenv("SHEET_NAME", "シート1")
 OUT_DIR    = Path(os.getenv("OUT_DIR", "docs"))
-PER_PAGE   = int(os.getenv("PER_PAGE", "80"))  # 画面内ページング用（データは1HTML）
-BUILD_THUMBS = os.getenv("BUILD_THUMBS", "1") == "1"  # サムネ生成ON/OFF
+PER_PAGE   = int(os.getenv("PER_PAGE", "80"))          # 画面内ページング
+BUILD_THUMBS = os.getenv("BUILD_THUMBS", "1") == "1"   # サムネ生成ON/OFF
+
+# サムネ品質
+THUMB_QUALITY = int(os.getenv("THUMB_QUALITY", "60"))  # WebP品質（小さめ）
+AVIF_QUALITY  = int(os.getenv("AVIF_QUALITY",  "35"))  # AVIF品質
 
 # 列番号（0始まり）
 COL_NAME   = 1
@@ -35,9 +40,9 @@ COL_BOOST  = 5
 COL_PRICE  = 7
 COL_IMGURL = 9
 
-# サムネ設定
+# サムネ保存先
 THUMB_DIR = OUT_DIR / "assets" / "thumbs"
-THUMB_W = 320  # 一覧用はこの幅に縮小（縦は自動）
+THUMB_W = 320  # 一覧の横幅
 
 # ==== 依存（BUILD_THUMBS=1 の場合のみ使う）====
 try:
@@ -46,6 +51,18 @@ try:
 except Exception:
     requests = None
     Image = None
+
+# AVIF対応可否（pillow-avif-plugin があれば True）
+HAS_AVIF = False
+try:
+    import pillow_avif  # noqa: F401
+    HAS_AVIF = True
+except Exception:
+    try:
+        from PIL import features as PIL_features
+        HAS_AVIF = bool(PIL_features.check("avif"))
+    except Exception:
+        HAS_AVIF = False
 
 # ========= Excel 自動解決 =========
 def resolve_excel_path(pref: str | None) -> Path:
@@ -60,7 +77,6 @@ def resolve_excel_path(pref: str | None) -> Path:
     for p in cands:
         if p.exists() and p.is_file():
             return p
-    # カレント内の最新 .xlsx を最後の手段
     files = sorted((Path(p) for p in glob.glob("*.xlsx")), key=lambda x: x.stat().st_mtime, reverse=True)
     if files:
         return files[0]
@@ -139,32 +155,35 @@ def searchable_row(row: pd.Series) -> str:
     return " ".join(kata_to_hira(nfkc_lower(str(row.get(k, ""))))
                     for k in ("name","code","pack","rarity","booster"))
 
-# サムネ生成
-def url_to_hash(u:str)->str:
-    return hashlib.md5(u.encode("utf-8")).hexdigest()
-
-def ensure_thumb(url: str) -> str | None:
-    if not url: return None
+# ========= サムネ生成（AVIF + WebP） =========
+def ensure_thumb_pair(url: str):
+    if not url: return ("","")
     THUMB_DIR.mkdir(parents=True, exist_ok=True)
-    fname = url_to_hash(url) + ".webp"
-    outp = THUMB_DIR / fname
-    if outp.exists():
-        return f"assets/thumbs/{fname}"  # HTMLからは ../assets/...（JSで補正）
+    h = hashlib.md5(url.encode("utf-8")).hexdigest()
+    webp = THUMB_DIR / f"{h}.webp"
+    avif = THUMB_DIR / f"{h}.avif"
+    # 既存なら再生成しない
+    if webp.exists() and (not HAS_AVIF or avif.exists()):
+        return ("assets/thumbs/"+webp.name, "assets/thumbs/"+avif.name if avif.exists() else "")
     if not (requests and Image):
-        return None
+        return ("","")
     try:
         r = requests.get(url, timeout=10, headers={"User-Agent":"Mozilla/5.0"})
         r.raise_for_status()
         im = Image.open(io.BytesIO(r.content)).convert("RGB")
-        w, h = im.size
-        if w <= 0 or h <= 0: return None
-        new_h = int(h * THUMB_W / w)
-        im = im.resize((THUMB_W, max(1,new_h)), Image.LANCZOS)
-        outp.parent.mkdir(parents=True, exist_ok=True)
-        im.save(outp, "WEBP", quality=70, method=6)
-        return f"assets/thumbs/{fname}"
+        w, h0 = im.size
+        if w<=0 or h0<=0: return ("","")
+        im = im.resize((THUMB_W, max(1,int(h0*THUMB_W/w))), Image.LANCZOS)
+        webp.parent.mkdir(parents=True, exist_ok=True)
+        im.save(webp, "WEBP", quality=THUMB_QUALITY, method=6, optimize=True)
+        if HAS_AVIF:
+            try:
+                im.save(avif, "AVIF", quality=AVIF_QUALITY)
+            except Exception:
+                pass
+        return ("assets/thumbs/"+webp.name, "assets/thumbs/"+avif.name if avif.exists() else "")
     except Exception:
-        return None
+        return ("","")
 
 # ========= データ整形 =========
 def col(df, i, default=""):
@@ -184,9 +203,12 @@ df = df[df["name"].str.strip()!=""].reset_index(drop=True)
 df["_s"] = df.apply(searchable_row, axis=1)
 
 if BUILD_THUMBS:
-    df["thumb"] = df["image"].map(ensure_thumb)
+    pairs = df["image"].map(ensure_thumb_pair)
+    df["thumb"]   = pairs.map(lambda t: t[0])  # WebP
+    df["thumb_a"] = pairs.map(lambda t: t[1])  # AVIF
 else:
     df["thumb"] = ""
+    df["thumb_a"] = ""
 
 # ========= 見た目 =========
 base_css = """
@@ -216,7 +238,8 @@ input.search:focus{box-shadow:0 0 0 2px rgba(17,24,39,.08)}
 .grid{margin:12px 0;width:100%}
 .grid.grid-img{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
 .grid.grid-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
-.card{background:var(--panel);border:1px solid var(--border);border-radius:14px;overflow:hidden;box-shadow:0 4px 10px rgba(0,0,0,.04);transition:transform .15s ease,box-shadow .15s ease}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:14px;overflow:hidden;box-shadow:0 4px 10px rgba(0,0,0,.04);transition:transform .15s ease,box-shadow .15s ease;
+  content-visibility:auto; contain-intrinsic-size: 480px;}
 .card:hover{transform:translateY(-2px);box-shadow:0 10px 20px rgba(0,0,0,.06)}
 .th{aspect-ratio:3/4;background:#f3f4f6;cursor:zoom-in}
 .th img{width:100%;height:100%;object-fit:cover;display:block;background:#f3f4f6}
@@ -250,7 +273,7 @@ nav.simple strong{color:#111;user-select:none}
 small.note{color:var(--muted)}
 """
 
-# ========= JS（共通データ __CARDS__ / 遅延＋保険） =========
+# ========= JS（短キー→正規化 / 遅延＋保険 / AVIF対応） =========
 base_js = r"""
 (function(){
   const header = document.querySelector('header');
@@ -277,60 +300,98 @@ base_js = r"""
   const viewerImg = document.getElementById('viewerImg');
   const viewerClose = document.getElementById('viewerClose');
 
-  let ALL = Array.isArray(window.__CARDS__) ? window.__CARDS__ : [];
+  // ---- スマホ/回線判定（ここがキモ） ----
+  const isMobile = matchMedia('(max-width: 640px)').matches;
+  const netType = navigator.connection?.effectiveType || '';
+  const slowNet = /^(slow-2g|2g|3g)$/i.test(netType);
 
+  // iOSメジャー版（AVIF重い個体はWebP優先）
+  const iOSVer = (()=>{ const m = navigator.userAgent.match(/OS (\d+)_/); return m ? parseInt(m[1],10) : 0; })();
+  const disableAvif = iOSVer && iOSVer < 16; // iOS 15以下はAVIF無効
+
+  // ページ当たり枚数：スマホや遅回線では落とす
+  const __PER = __PER_PAGE__;
+  const PER_PAGE_ADJ = (isMobile || slowNet) ? Math.min(__PER, 48) : __PER;
+
+  // eager読み込みの枚数と先読み距離
+  const eager1 = (isMobile || slowNet) ? 8  : 16;
+  const eager2 = (isMobile || slowNet) ? 16 : 32;
+  const ROOT_MARGIN = (isMobile || slowNet) ? "300px 0px" : "600px 0px";
+
+  // 初回の画像ON/OFF：モバイル or 遅回線はOFF起動（ユーザーで切替可）
+  let showImages;
+  const saved = localStorage.getItem('showImages');
+  if (saved === null) {
+    showImages = !(isMobile || slowNet);
+  } else {
+    showImages = saved === '1';
+  }
+
+  // 共通データ（window.__CARDS__）を通常キーに正規化
+  function norm(it){
+    return {
+      name: it.n ?? it.name ?? "",
+      pack: it.p ?? it.pack ?? "",
+      code: it.c ?? it.code ?? "",
+      rarity: it.r ?? it.rarity ?? "",
+      booster: it.b ?? it.booster ?? "",
+      price: (it.pr ?? it.price ?? null),
+      image: it.i ?? it.image ?? "",
+      thumb: it.t ?? it.thumb ?? "",
+      thumb_a: it.ta ?? it.thumb_a ?? "",
+      _s: it.s ?? it._s ?? ""
+    };
+  }
+  let ALL = Array.isArray(window.__CARDS__) ? window.__CARDS__.map(norm) : [];
+
+  // ---- 検索ユーティリティ ----
   const SEP_RE = /[\s\u30FB\u00B7·/／\-_—–−]+/g;
   function kataToHira(str){ return (str||'').replace(/[\u30A1-\u30FA]/g, ch => String.fromCharCode(ch.charCodeAt(0)-0x60)); }
   const kanjiReadingMap = { "伝説":"でんせつ" };
   const latinAliasMap = { "complex": "こんぷれっくす", "c0br4": "こぶら" };
-
   function normalizeForSearch(s){
     s = (s||'').normalize('NFKC').toLowerCase();
     for(const [k,v] of Object.entries(latinAliasMap)){ s = s.split(k).join(v); }
     for(const [k,v] of Object.entries(kanjiReadingMap)){ s = s.split(k).join(v); }
-    s = kataToHira(s);
-    s = s.replace(SEP_RE, '');
+    s = kataToHira(s).replace(SEP_RE, '');
     return s;
   }
 
   function fmtYen(n){ return (n==null||n==='')?'-':('¥'+parseInt(n,10).toLocaleString()); }
-  function escHtml(s){ return (s||'').replace(/[&<>\"']/g, m => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[m])); }
+  function escHtml(s){ return (s||'').replace(/[&<>\"']/g, m => ({"&":"&amp;","<":"&lt;","&gt;":">","\"":"&quot;","'":"&#39;"}[m])); }
 
-  let VIEW=[]; let page=1; const PER_PAGE=__PER_PAGE__;
-  let currentSort=__INITIAL_SORT__;
-  // 初回はON（以後は記憶）
-  let showImages = (localStorage.getItem('showImages') ?? '1') === '1';
+  let VIEW=[]; let page=1; let currentSort=__INITIAL_SORT__;
 
   function shrinkPrices(root=document){
     const MIN_PX = 10;
     root.querySelectorAll('.mx').forEach(el=>{
       const style = window.getComputedStyle(el);
-      const baseSize = parseFloat(style.fontSize) || 14;
-      let size = baseSize;
+      let size = parseFloat(style.fontSize) || 14;
       const fits = () => el.scrollWidth <= el.clientWidth;
       if (fits()) return;
       while (!fits() && size > MIN_PX) { size -= 1; el.style.fontSize = size + 'px'; }
     });
   }
 
-  // 画像カード（相対サムネは ../ を付与、404時はフルへフォールバック）
+  // 画像カード（AVIFは条件付き、相対サムネは ../ を付与、404→フルへフォールバック）
   function cardHTML_img(it){
     const nameEsc = escHtml(it.name||'');
-    const full = it.image?it.image:'';
-    let thumb = it.thumb || full;
-    if (thumb && !/^https?:\/\//.test(thumb) && !thumb.startsWith('../')) {
-      thumb = '../' + thumb;  // docs/<mode>/index.html から見て 1階層上
-    }
+    const full = it.image||'';
+    const fix = p => (p && !/^https?:\/\//.test(p) && !p.startsWith('../')) ? ('../'+p) : p;
+
+    let avif  = disableAvif ? "" : fix(it.thumb_a||"");
+    let webp  = fix(it.thumb||"") || full;
+
     return `
   <article class="card">
     <div class="th" data-full="${full}">
-      <img
-        alt="${nameEsc}"
-        loading="lazy" decoding="async"
-        width="600" height="800"
-        data-src="${thumb}" src=""
-        onerror="this.onerror=null;var p=this.closest('.th');this.src=p?p.getAttribute('data-full'):this.src;"
-      >
+      <picture>
+        ${avif ? `<source type="image/avif" srcset="${avif}">` : ``}
+        <img alt="${nameEsc}" loading="lazy" decoding="async"
+             width="600" height="800"
+             data-src="${webp}" src=""
+             onerror="this.onerror=null;var p=this.closest('.th');this.src=p?p.getAttribute('data-full'):this.src;">
+      </picture>
     </div>
     <div class="b">
       <h3 class="n">${nameEsc}</h3>
@@ -352,53 +413,45 @@ base_js = r"""
   </article>`;
   }
 
-  // IO: 可視域に入ったら読み込む
+  // IO: 可視域に入ったら読み込む（スマホは控えめ）
   let io;
   function setupIO(){
     if (io) io.disconnect();
-    const opts = { rootMargin: "200px 0px", threshold: 0.01 };
     io = new IntersectionObserver((entries)=>{
       entries.forEach(e=>{
         if (e.isIntersecting){
           const img = e.target;
           const ds = img.getAttribute('data-src');
-          if (ds && !img.src){
-            img.src = ds;
-            img.removeAttribute('data-src');
-          }
+          if (ds && !img.src){ img.src = ds; img.removeAttribute('data-src'); }
           io.unobserve(img);
         }
       });
-    }, opts);
+    }, { rootMargin: ROOT_MARGIN, threshold: 0.01 });
+
     document.querySelectorAll('#grid img[data-src]').forEach(img=>io.observe(img));
-    // Above-the-fold の優先度
     document.querySelectorAll('#grid img').forEach((img, i)=>{ img.setAttribute('fetchpriority', i < 8 ? 'high' : 'low'); });
   }
 
   // 見えてる分は即読み込み（IOの保険）
-  function eagerLoad(n=16){
+  function eagerLoad(n){
     const imgs=[...document.querySelectorAll('#grid img[data-src]')].slice(0,n);
-    imgs.forEach(img=>{
-      if(!img.src){
-        img.src = img.getAttribute('data-src');
-        img.removeAttribute('data-src');
-      }
-    });
+    imgs.forEach(img=>{ if(!img.src){ img.src = img.getAttribute('data-src'); img.removeAttribute('data-src'); }});
   }
 
   function render(){
     grid.className = showImages ? 'grid grid-img' : 'grid grid-list';
-    const total=VIEW.length; const pages=Math.max(1, Math.ceil(total/PER_PAGE)); if(page>pages) page=pages;
-    const start=(page-1)*PER_PAGE; const rows=VIEW.slice(start, start+PER_PAGE);
+    const total=VIEW.length;
+    const pages=Math.max(1, Math.ceil(total/PER_PAGE_ADJ));
+    if(page>pages) page=pages;
+    const start=(page-1)*PER_PAGE_ADJ;
+    const rows=VIEW.slice(start, start+PER_PAGE_ADJ);
     grid.innerHTML = rows.map(showImages ? cardHTML_img : cardHTML_list).join('');
 
     if(showImages){
       grid.querySelectorAll('.th').forEach(th=>{
         th.addEventListener('click', ()=>{
           const src = th.getAttribute('data-full') || th.querySelector('img')?.src || '';
-          if(!src) return;
-          viewerImg.src = src;
-          viewer.classList.add('show');
+          if(!src) return; viewerImg.src = src; viewer.classList.add('show');
         });
       });
     }
@@ -411,18 +464,16 @@ base_js = r"""
       n.onclick=(e)=>{
         const a=e.target.closest('a[data-jump]'); if(!a) return;
         e.preventDefault();
-        const j=a.dataset.jump;
-        if(j==='prev') page--; else if(j==='next') page++;
-        render();
-        window.scrollTo({ top: 0, behavior: 'smooth' });
+        const j=a.dataset.jump; if(j==='prev') page--; else if(j==='next') page++;
+        render(); window.scrollTo({ top: 0, behavior: 'smooth' });
       };
     });
 
     shrinkPrices(grid);
     if (showImages) {
-      setupIO();            // IOでの遅延読込
-      eagerLoad(16);        // 最初の16枚は即読み込み
-      setTimeout(()=>eagerLoad(32), 600); // 追い保険
+      setupIO();
+      eagerLoad(eager1);
+      setTimeout(()=>eagerLoad(eager2), 600);
     }
   }
 
@@ -437,10 +488,9 @@ base_js = r"""
       const sCode = normalizeForSearch(it.code||'');
       const sPackBooster = normalizeForSearch([it.pack||'', it.booster||''].join(' '));
       const sRarity = normalizeForSearch(it.rarity||'');
-
-      return (!nameQv   || sName.includes(nameQv))
-          && (!codeQv   || sCode.includes(codeQv))
-          && (!packQv   || sPackBooster.includes(packQv))
+      return (!nameQv || sName.includes(nameQv))
+          && (!codeQv || sCode.includes(codeQv))
+          && (!packQv || sPackBooster.includes(packQv))
           && (!rarityQv || sRarity.includes(rarityQv));
     });
 
@@ -466,7 +516,9 @@ base_js = r"""
 
   btnImg?.addEventListener('click', ()=>{ showImages = !showImages; localStorage.setItem('showImages', showImages ? '1' : '0'); setImgBtn(); render(); });
 
-  function onInputDebounced(el){ el.addEventListener('input', ()=>{ clearTimeout(el._t); el._t=setTimeout(apply,120); }); }
+  // 入力デバウンス：モバイルは少し長め
+  const DEBOUNCE = (isMobile || slowNet) ? 240 : 120;
+  function onInputDebounced(el){ el.addEventListener('input', ()=>{ clearTimeout(el._t); el._t=setTimeout(apply,DEBOUNCE); }); }
   [nameQ, codeQ, packQ, rarityQ].forEach(onInputDebounced);
 
   function closeViewer(){ viewer.classList.remove('show'); viewerImg.src=''; }
@@ -480,17 +532,49 @@ base_js = r"""
 })();
 """
 
-# ===== 共通データを書き出し（assets/cards.min.js） =====
+
+# ===== 共通データを書き出し（短キーJSON） =====
 def write_cards_js(df: pd.DataFrame) -> str:
-    data = df[["name","pack","code","rarity","booster","price","image","thumb","_s"]].to_dict("records")
-    payload = json.dumps(data, ensure_ascii=False, separators=(",",":"))
+    # _s / s どちらの列名でも動くように吸収
+    has_s = 's' in df.columns
+    has__s = '_s' in df.columns
+    s_col = 's' if has_s else ('_s' if has__s else None)
+
+    # 足りない列があっても動くように get で吸収
+    cols = ["name","pack","code","rarity","booster","price","image","thumb","thumb_a"]
+    base = df.copy()
+    for c in cols:
+        if c not in base.columns:
+            base[c] = ""
+
+    records = []
+    for rec in base[cols + ([s_col] if s_col else [])].to_dict(orient="records"):
+        price = rec.get("price", None)
+        try:
+            price = None if pd.isna(price) else int(price)
+        except Exception:
+            price = None
+        records.append({
+            "n": rec.get("name",""),
+            "p": rec.get("pack",""),
+            "c": rec.get("code",""),
+            "r": rec.get("rarity",""),
+            "b": rec.get("booster",""),
+            "pr": price,
+            "i": rec.get("image",""),
+            "t": rec.get("thumb",""),
+            "ta": rec.get("thumb_a",""),
+            "s": rec.get(s_col,"") if s_col else ""  # 検索用フィールド
+        })
+
+    payload = json.dumps(records, ensure_ascii=False, separators=(",",":"))
     ver = hashlib.md5(payload.encode("utf-8")).hexdigest()[:8]
     assets = OUT_DIR / "assets"
     assets.mkdir(parents=True, exist_ok=True)
     (assets / "cards.min.js").write_text("window.__CARDS__="+payload, encoding="utf-8")
     return ver
 
-# ===== HTML（JSONは外部JSから読む） =====
+# ===== HTML（各モード1枚） =====
 def html_page(title: str, js_source: str, logo_uri: str, cards_ver: str) -> str:
     shop_svg = "<svg viewBox='0 0 24 24' aria-hidden='true' fill='currentColor'><path d='M3 9.5V8l2.2-3.6c.3-.5.6-.7 1-.7h11.6c.4 0 .7.2.9.6L21 8v1.5c0 1-.8 1.8-1.8 1.8-.9 0-1.6-.6-1.8-1.4-.2.8-.9 1.4-1.8 1.4s-1.6-.6-1.8-1.4c-.2.8-.9 1.4-1.8 1.4s-1.6-.6-1.8-1.4c-.2.8-.9 1.4-1.8 1.4s-1.6-.6-1.8-1.4c-.2.8-.9 1.4-1.8 1.4C3.8 11.3 3 10.5 3 9.5zM5 12.5h14V20c0 .6-.4 1-1 1H6c-.6 0-1-.4-1-1v-7.5zm4 1.5v5h6v-5H9zM6.3 5.2 5 7.5h14l-1.3-2.3H6.3z'/></svg>"
     login_svg= "<svg viewBox='0 0 24 24' aria-hidden='true' fill='currentColor'><path d='M12 12a5 5 0 1 0-5-5 5 5 0 0 0 5 5zm0 2c-4.418 0-8 2.239-8 5v2h16v-2c0-2.761-3.582-5-8-5z'/></svg>"
@@ -506,7 +590,6 @@ def html_page(title: str, js_source: str, logo_uri: str, cards_ver: str) -> str:
     if logo_uri:
         parts.append(f"<!-- LOGO embedded -->\n<img src='{logo_uri}' alt='Shop Logo'>")
     else:
-        parts.append("<!-- LOGO missing: fallback -->")
         parts.append("<div class='brand-fallback'>YOUR SHOP</div>")
     parts.append("</div>")
     parts.append(f"<div class='center-ttl'>{html_mod.escape(title)}</div>")
@@ -529,7 +612,6 @@ def html_page(title: str, js_source: str, logo_uri: str, cards_ver: str) -> str:
     parts.append("  <nav class='simple'></nav><div id='grid' class='grid grid-img'></div><nav class='simple'></nav>")
     parts.append("  <small class='note'>このページ内のデータのみで検索・並び替え・ページングできます。画像クリックで拡大表示。</small>")
     parts.append("</main>")
-    # 共通データ（各モード配下HTML → ../assets/）
     parts.append(f"<script src='../assets/cards.min.js?v={cards_ver}'></script>")
     parts.append("<div id='viewer' class='viewer'><div class='vc'><img id='viewerImg' alt=''><button id='viewerClose' class='close'>×</button></div></div>")
     parts.append("<script>"); parts.append(js_source); parts.append("</script></body></html>")
@@ -537,7 +619,7 @@ def html_page(title: str, js_source: str, logo_uri: str, cards_ver: str) -> str:
 
 # ========= 出力 =========
 OUT_DIR.mkdir(parents=True, exist_ok=True)
-CARDS_VER = write_cards_js(df)  # 共通JSに一回だけ書き出し（キャッシュバスター付）
+CARDS_VER = write_cards_js(df)  # 一度だけデータを書き出し
 
 def write_mode(dir_name: str, initial_sort_js_literal: str, title_text: str, cards_ver: str):
     sub = OUT_DIR / dir_name
@@ -549,8 +631,6 @@ def write_mode(dir_name: str, initial_sort_js_literal: str, title_text: str, car
 write_mode("default",   "null",   "デュエマ買取表",             CARDS_VER)
 write_mode("price_desc","'desc'", "デュエマ買取表（price_desc）", CARDS_VER)
 write_mode("price_asc", "'asc'",  "デュエマ買取表（price_asc）",  CARDS_VER)
-
-# ルートは default/ にリダイレクト
 (OUT_DIR / "index.html").write_text("<meta http-equiv='refresh' content='0; url=default/'>", encoding="utf-8")
 
 print(f"[*] Mode: BUILD_THUMBS={'1' if BUILD_THUMBS else '0'}  PER_PAGE={PER_PAGE}")
