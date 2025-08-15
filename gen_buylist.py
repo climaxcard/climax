@@ -2,10 +2,10 @@
 """
 デュエマ買取表 静的ページ生成（豪華版・横4列・完全オフライン・高速版）
 - 画像は軽量WebPサムネ（320px）を自家ホスト、クリック時のみフル解像度
-- IntersectionObserver + data-src + eagerLoad（初回見えてる分は即読み込み）
+- IntersectionObserver + data-src + eagerLoad（見えてる分は即読込）
 - サムネ404時は自動でフル画像へフォールバック
 - 1モード=1HTMLのみ（p1〜pN廃止）、データは共通JS（assets/cards.min.js）へ分離
-- CI対応：EXCEL_PATH / OUT_DIR / PER_PAGE / BUILD_THUMBS を環境変数で上書き可
+- EXCEL_PATH / OUT_DIR / PER_PAGE / BUILD_THUMBS を環境変数で上書き可
 """
 
 from pathlib import Path
@@ -13,65 +13,17 @@ from urllib.parse import urlparse, parse_qs
 import pandas as pd
 import html as html_mod
 import unicodedata as ud
-import math, base64, mimetypes, os, sys, hashlib, io, json
-
-# 先頭の import に追加
-import glob, time
-
-# これを gen_buylist.py に追加（load_excel の上あたり）
-def resolve_excel_path(pref: str|None) -> Path:
-    cands = []
-    if pref: cands.append(Path(pref))
-    cands += [
-        Path("buylist.xlsx"),
-        Path("買取読み込みファイル.xlsx"),
-        Path(DEFAULT_EXCEL),
-        Path(FALLBACK_WINDOWS),
-    ]
-    for p in cands:
-        if p.exists() and p.is_file():
-            return p
-    # カレント内の最新 .xlsx を最後の手段として採用
-    files = sorted((Path(p) for p in glob.glob("*.xlsx")), key=lambda x: x.stat().st_mtime, reverse=True)
-    if files:
-        return files[0]
-    # ダメなら詳細を出して終了
-    raise FileNotFoundError(
-        "Excelが見つかりません。\n"
-        f"  試した候補:\n"
-        + "\n".join("   - "+str(p) for p in cands)
-    )
-
-# load_excel をこれに置き換え
-def load_excel(path_str: str, sheet_name: str|None) -> pd.DataFrame:
-    p = resolve_excel_path(path_str if path_str else None)
-    try:
-        if sheet_name:
-            return pd.read_excel(p, sheet_name=sheet_name, header=None, engine="openpyxl")
-        xls = pd.ExcelFile(p, engine="openpyxl")
-        return pd.read_excel(xls, sheet_name=xls.sheet_names[0], header=None, engine="openpyxl")
-    except Exception:
-        xls = pd.ExcelFile(p, engine="openpyxl")
-        return pd.read_excel(xls, sheet_name=xls.sheet_names[0], header=None, engine="openpyxl")
-
-
-# ==== 依存（BUILD_THUMBS=1 の場合のみ使う）====
-try:
-    import requests
-    from PIL import Image
-except Exception:
-    # 未インストールでもスクリプト自体は落とさない
-    requests = None
-    Image = None
+import base64, mimetypes, os, sys, hashlib, io, json, glob
 
 # ========= 設定 =========
-DEFAULT_EXCEL = "data/buylist.xlsx"
-FALLBACK_WINDOWS = r"C:\Users\user\Desktop\buylist.xlsx"
+DEFAULT_EXCEL     = "buylist.xlsx"  # まずはカレントの buylist.xlsx を探す
+DEFAULT_EXCEL_FBK = "data/buylist.xlsx"
+FALLBACK_WINDOWS  = r"C:\Users\user\Desktop\デュエマ買取表\buylist.xlsx"
 
 EXCEL_PATH = os.getenv("EXCEL_PATH", DEFAULT_EXCEL)
 SHEET_NAME = os.getenv("SHEET_NAME", "シート1")
 OUT_DIR    = Path(os.getenv("OUT_DIR", "docs"))
-PER_PAGE   = int(os.getenv("PER_PAGE", "80"))  # 画面内ページング用（データは1HTMLに全件）
+PER_PAGE   = int(os.getenv("PER_PAGE", "80"))  # 画面内ページング用（データは1HTML）
 BUILD_THUMBS = os.getenv("BUILD_THUMBS", "1") == "1"  # サムネ生成ON/OFF
 
 # 列番号（0始まり）
@@ -86,6 +38,47 @@ COL_IMGURL = 9
 # サムネ設定
 THUMB_DIR = OUT_DIR / "assets" / "thumbs"
 THUMB_W = 320  # 一覧用はこの幅に縮小（縦は自動）
+
+# ==== 依存（BUILD_THUMBS=1 の場合のみ使う）====
+try:
+    import requests
+    from PIL import Image
+except Exception:
+    requests = None
+    Image = None
+
+# ========= Excel 自動解決 =========
+def resolve_excel_path(pref: str | None) -> Path:
+    cands = []
+    if pref: cands.append(Path(pref))
+    cands += [
+        Path(DEFAULT_EXCEL),
+        Path(DEFAULT_EXCEL_FBK),
+        Path(FALLBACK_WINDOWS),
+        Path("買取読み込みファイル.xlsx"),  # 互換
+    ]
+    for p in cands:
+        if p.exists() and p.is_file():
+            return p
+    # カレント内の最新 .xlsx を最後の手段
+    files = sorted((Path(p) for p in glob.glob("*.xlsx")), key=lambda x: x.stat().st_mtime, reverse=True)
+    if files:
+        return files[0]
+    raise FileNotFoundError(
+        "Excelが見つかりません。\n"
+        + "\n".join(f"  - {Path(x).resolve()}" for x in [pref or "", DEFAULT_EXCEL, DEFAULT_EXCEL_FBK, FALLBACK_WINDOWS])
+    )
+
+def load_excel(path_str: str, sheet_name: str | None) -> pd.DataFrame:
+    p = resolve_excel_path(path_str if path_str else None)
+    try:
+        if sheet_name:
+            return pd.read_excel(p, sheet_name=sheet_name, header=None, engine="openpyxl")
+        xls = pd.ExcelFile(p, engine="openpyxl")
+        return pd.read_excel(xls, sheet_name=xls.sheet_names[0], header=None, engine="openpyxl")
+    except Exception:
+        xls = pd.ExcelFile(p, engine="openpyxl")
+        return pd.read_excel(xls, sheet_name=xls.sheet_names[0], header=None, engine="openpyxl")
 
 # ---- ロゴ探索 ----
 def find_logo_path():
@@ -108,24 +101,7 @@ def logo_to_data_uri(p):
 
 LOGO_URI = logo_to_data_uri(find_logo_path())
 
-# ========= 入力 =========
-def load_excel(path_str: str, sheet_name: str|None) -> pd.DataFrame:
-    p = Path(path_str)
-    if not p.exists():
-        p_fb = Path(FALLBACK_WINDOWS)
-        if p_fb.exists():
-            p = p_fb
-        else:
-            raise FileNotFoundError(f"Excelが見つかりません: {Path(path_str).resolve()}")
-    try:
-        if sheet_name:
-            return pd.read_excel(p, sheet_name=sheet_name, header=None, engine="openpyxl")
-        xls = pd.ExcelFile(p, engine="openpyxl")
-        return pd.read_excel(xls, sheet_name=xls.sheet_names[0], header=None, engine="openpyxl")
-    except Exception:
-        xls = pd.ExcelFile(p, engine="openpyxl")
-        return pd.read_excel(xls, sheet_name=xls.sheet_names[0], header=None, engine="openpyxl")
-
+# ========= 入力ロード =========
 try:
     df_raw = load_excel(EXCEL_PATH, SHEET_NAME)
 except FileNotFoundError as e:
@@ -167,16 +143,14 @@ def searchable_row(row: pd.Series) -> str:
 def url_to_hash(u:str)->str:
     return hashlib.md5(u.encode("utf-8")).hexdigest()
 
-def ensure_thumb(url: str) -> str|None:
+def ensure_thumb(url: str) -> str | None:
     if not url: return None
     THUMB_DIR.mkdir(parents=True, exist_ok=True)
     fname = url_to_hash(url) + ".webp"
     outp = THUMB_DIR / fname
     if outp.exists():
-        return f"assets/thumbs/{fname}"  # 相対はJS側で補正するのでここは基準パスで返す
-
+        return f"assets/thumbs/{fname}"  # HTMLからは ../assets/...（JSで補正）
     if not (requests and Image):
-        # 依存が無い場合はスキップしてフルURLを使わせる
         return None
     try:
         r = requests.get(url, timeout=10, headers={"User-Agent":"Mozilla/5.0"})
@@ -209,7 +183,6 @@ df = df[~df["name"].str.match(r"^Unnamed", na=False)]
 df = df[df["name"].str.strip()!=""].reset_index(drop=True)
 df["_s"] = df.apply(searchable_row, axis=1)
 
-# サムネ列
 if BUILD_THUMBS:
     df["thumb"] = df["image"].map(ensure_thumb)
 else:
@@ -218,43 +191,32 @@ else:
 # ========= 見た目 =========
 base_css = """
 *{box-sizing:border-box}
-:root{
-  --bg:#ffffff; --panel:#ffffff; --border:#e5e7eb; --accent:#e11d48;
-  --text:#111111; --muted:#6b7280; --header-h: 72px;
-}
-body{ margin:0;color:var(--text);background:var(--bg);font-family:Inter,system-ui,'Noto Sans JP',sans-serif; padding-top: var(--header-h); }
-.bg-deco{display:none}
-header{
-  position:fixed;top:0;left:0;right:0;z-index:1000;background:#fff;border-bottom:1px solid var(--border);
-  padding:10px 16px; box-shadow:0 2px 10px rgba(0,0,0,.04);
-}
+:root{--bg:#fff;--panel:#fff;--border:#e5e7eb;--accent:#e11d48;--text:#111;--muted:#6b7280;--header-h:72px}
+body{margin:0;color:var(--text);background:var(--bg);font-family:Inter,system-ui,'Noto Sans JP',sans-serif;padding-top:var(--header-h)}
+header{position:fixed;top:0;left:0;right:0;z-index:1000;background:#fff;border-bottom:1px solid var(--border);padding:10px 16px;box-shadow:0 2px 10px rgba(0,0,0,.04)}
 .header-wrap{max-width:1200px;margin:0 auto;display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:12px;width:100%}
 .brand-left{display:flex;align-items:center;gap:12px;min-width:0;justify-self:start}
 .brand-left img{height:60px;display:block}
 .brand-fallback{font-weight:1000;letter-spacing:.6px;color:#111;font-size:22px}
-.center-ttl{justify-self:center;font-weight:900;white-space:nowrap;font-size:clamp(20px, 3.2vw, 30px); color:#111}
+.center-ttl{justify-self:center;font-weight:900;white-space:nowrap;font-size:clamp(20px,3.2vw,30px);color:#111}
 .actions{display:flex;align-items:center;gap:10px;justify-self:end}
-.iconbtn{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--border);background:#fff;color:#111;border-radius:12px;padding:9px 12px;text-decoration:none;font-size:13px;transition:transform .12s ease, background .12s ease}
-.iconbtn:hover{background:#f9fafb; transform:translateY(-1px)}
+.iconbtn{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--border);background:#fff;color:#111;border-radius:12px;padding:9px 12px;text-decoration:none;font-size:13px;transition:transform .12s ease,background .12s ease}
+.iconbtn:hover{background:#f9fafb;transform:translateY(-1px)}
 .iconbtn svg{width:16px;height:16px;display:block;color:#111}
 .wrap{max-width:1200px;margin:0 auto;padding:12px 16px}
-.controls{
-  display:grid;grid-template-columns:repeat(2, minmax(180px,1fr));
-  grid-template-areas: "q1 q2" "q3 q4" "acts acts";
-  gap:10px;margin:10px 0 14px;align-items:center;
-}
-#nameQ{grid-area:q1} #codeQ{grid-area:q2} #packQ{grid-area:q3} #rarityQ{grid-area:q4}
-.controls .btns{ grid-area:acts; display:flex; gap:8px; flex-wrap:wrap }
+.controls{display:grid;grid-template-columns:repeat(2,minmax(180px,1fr));grid-template-areas:"q1 q2" "q3 q4" "acts acts";gap:10px;margin:10px 0 14px;align-items:center}
+#nameQ{grid-area:q1}#codeQ{grid-area:q2}#packQ{grid-area:q3}#rarityQ{grid-area:q4}
+.controls .btns{grid-area:acts;display:flex;gap:8px;flex-wrap:wrap}
 input.search{background:#fff;border:1px solid var(--border);color:#111;border-radius:12px;padding:11px 12px;font-size:14px;outline:none;min-width:0;transition:box-shadow .12s ease;width:100%}
 input.search::placeholder{color:#9ca3af}
-input.search:focus{ box-shadow:0 0 0 2px rgba(17,24,39,.08) }
-.btn{background:#fff;border:1px solid var(--border);color:#111;border-radius:12px;padding:9px 12px;font-size:13px;cursor:pointer;text-decoration:none;white-space:nowrap;transition:transform .12s ease, background .12s ease}
-.btn:hover{background:#f9fafb; transform:translateY(-1px)}
+input.search:focus{box-shadow:0 0 0 2px rgba(17,24,39,.08)}
+.btn{background:#fff;border:1px solid var(--border);color:#111;border-radius:12px;padding:9px 12px;font-size:13px;cursor:pointer;text-decoration:none;white-space:nowrap;transition:transform .12s ease,background .12s ease}
+.btn:hover{background:#f9fafb;transform:translateY(-1px)}
 .btn.active{outline:2px solid var(--accent)}
 .grid{margin:12px 0;width:100%}
-.grid.grid-img{display:grid;grid-template-columns:repeat(4, minmax(0,1fr));gap:12px}
-.grid.grid-list{display:grid;grid-template-columns:repeat(2, minmax(0,1fr));gap:12px}
-.card{background:var(--panel);border:1px solid var(--border);border-radius:14px;overflow:hidden;box-shadow:0 4px 10px rgba(0,0,0,.04);transition:transform .15s ease, box-shadow .15s ease}
+.grid.grid-img{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.grid.grid-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:14px;overflow:hidden;box-shadow:0 4px 10px rgba(0,0,0,.04);transition:transform .15s ease,box-shadow .15s ease}
 .card:hover{transform:translateY(-2px);box-shadow:0 10px 20px rgba(0,0,0,.06)}
 .th{aspect-ratio:3/4;background:#f3f4f6;cursor:zoom-in}
 .th img{width:100%;height:100%;object-fit:cover;display:block;background:#f3f4f6}
@@ -262,34 +224,33 @@ input.search:focus{ box-shadow:0 0 0 2px rgba(17,24,39,.08) }
 .n{font-size:14px;font-weight:800;line-height:1.35;margin:0 0 6px;color:#111}
 .meta{font-size:11px;color:var(--muted);word-break:break-word}
 .p{margin-top:6px;display:flex;flex-wrap:wrap}
-.mx{font-weight:1000;color:var(--accent);font-size:clamp(16px, 2.4vw, 22px);line-height:1.05;text-shadow:none;word-break:break-word; overflow-wrap:anywhere;font-variant-numeric:tabular-nums;white-space:nowrap;display:inline-block;max-width:100%}
+.mx{font-weight:1000;color:var(--accent);font-size:clamp(16px,2.4vw,22px);line-height:1.05;overflow-wrap:anywhere;font-variant-numeric:tabular-nums;white-space:nowrap;display:inline-block;max-width:100%}
 .grid.grid-img .meta{display:none}
 nav.simple{display:flex;justify-content:center;align-items:center;margin:14px 0;gap:14px;flex-wrap:wrap}
 nav.simple a{color:#111;background:#fff;border:1px solid var(--border);padding:8px 16px;border-radius:12px;text-decoration:none;white-space:nowrap}
 nav.simple a.disabled{opacity:.45;pointer-events:none}
 nav.simple strong{color:#111;user-select:none}
-.viewer{position:fixed; inset:0; background:rgba(0,0,0,.86); display:none; align-items:center; justify-content:center; z-index:2000}
+.viewer{position:fixed;inset:0;background:rgba(0,0,0,.86);display:none;align-items:center;justify-content:center;z-index:2000}
 .viewer.show{display:flex}
 .viewer .vc{position:relative;max-width:92vw;max-height:92vh}
 .viewer img{max-width:92vw;max-height:92vh;display:block}
 .viewer button.close{position:absolute;top:-12px;right:-12px;background:#fff;border:1px solid var(--border);color:#111;border-radius:999px;width:38px;height:38px;cursor:pointer}
 @media (max-width:600px){
-  .header-wrap{display:grid;grid-template-columns:auto 1fr;grid-template-areas:"logo title" "actions actions";align-items:center;gap:10px}
-  .brand-left{ grid-area:logo; justify-content:flex-start }
-  .brand-left img{ height:56px }
-  .center-ttl{ grid-area:title; font-size:clamp(20px, 7vw, 28px); line-height:1.1; text-align:left; white-space:nowrap }
-  .actions{ grid-area:actions; justify-content:center }
-  .grid.grid-img{grid-template-columns:repeat(4, minmax(0,1fr)); gap:8px}
+  .header-wrap{display:grid;grid-template-columns:auto 1fr;grid-template-areas:"logo title" "actions actions";gap:10px}
+  .brand-left img{height:56px}
+  .center-ttl{font-size:clamp(20px,7vw,28px);line-height:1.1;text-align:left;white-space:nowrap}
+  .actions{justify-content:center}
+  .grid.grid-img{grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
   .b{padding:6px}.n{font-size:11px}
-  .mx{ font-size:clamp(12px, 4.2vw, 16px); white-space:nowrap }
-  nav.simple{gap:8px; flex-wrap:nowrap; justify-content:space-between}
-  nav.simple a{padding:6px 10px; font-size:12px; display:inline-flex}
+  .mx{font-size:clamp(12px,4.2vw,16px);white-space:nowrap}
+  nav.simple{gap:8px;flex-wrap:nowrap;justify-content:space-between}
+  nav.simple a{padding:6px 10px;font-size:12px;display:inline-flex}
   nav.simple strong{font-size:12px}
 }
 small.note{color:var(--muted)}
 """
 
-# ========= JS（共通データ __CARDS__ を読む / 遅延読込＋保険） =========
+# ========= JS（共通データ __CARDS__ / 遅延＋保険） =========
 base_js = r"""
 (function(){
   const header = document.querySelector('header');
@@ -316,7 +277,6 @@ base_js = r"""
   const viewerImg = document.getElementById('viewerImg');
   const viewerClose = document.getElementById('viewerClose');
 
-  // 共通データ読込（assets/cards.min.js が window.__CARDS__ を定義）
   let ALL = Array.isArray(window.__CARDS__) ? window.__CARDS__ : [];
 
   const SEP_RE = /[\s\u30FB\u00B7·/／\-_—–−]+/g;
@@ -338,8 +298,8 @@ base_js = r"""
 
   let VIEW=[]; let page=1; const PER_PAGE=__PER_PAGE__;
   let currentSort=__INITIAL_SORT__;
-  let showImages = (localStorage.getItem('showImages') ?? null) === '1';
-  if (localStorage.getItem('showImages') === null) { showImages = false; } // 初回はOFF
+  // 初回はON（以後は記憶）
+  let showImages = (localStorage.getItem('showImages') ?? '1') === '1';
 
   function shrinkPrices(root=document){
     const MIN_PX = 10;
@@ -353,7 +313,7 @@ base_js = r"""
     });
   }
 
-  // 画像カード（相対サムネは ../ を付与、404時はフル画像へフォールバック）
+  // 画像カード（相対サムネは ../ を付与、404時はフルへフォールバック）
   function cardHTML_img(it){
     const nameEsc = escHtml(it.name||'');
     const full = it.image?it.image:'';
@@ -541,7 +501,6 @@ def html_page(title: str, js_source: str, logo_uri: str, cards_ver: str) -> str:
     parts.append("<link rel='preconnect' href='https://dm.takaratomy.co.jp' crossorigin>")
     parts.append("<link rel='dns-prefetch' href='//dm.takaratomy.co.jp'>")
     parts.append("<style>"); parts.append(base_css); parts.append("</style></head><body>")
-    parts.append("<div class='bg-deco' aria-hidden='true'></div>")
     parts.append("<header><div class='header-wrap'>")
     parts.append("<div class='brand-left'>")
     if logo_uri:
@@ -573,14 +532,12 @@ def html_page(title: str, js_source: str, logo_uri: str, cards_ver: str) -> str:
     # 共通データ（各モード配下HTML → ../assets/）
     parts.append(f"<script src='../assets/cards.min.js?v={cards_ver}'></script>")
     parts.append("<div id='viewer' class='viewer'><div class='vc'><img id='viewerImg' alt=''><button id='viewerClose' class='close'>×</button></div></div>")
-    parts.append("<script>"); parts.append(base_js); parts.append("</script></body></html>")
+    parts.append("<script>"); parts.append(js_source); parts.append("</script></body></html>")
     return "".join(parts)
 
 # ========= 出力 =========
 OUT_DIR.mkdir(parents=True, exist_ok=True)
-
-# データを共通JSに一回だけ書き出し（バージョン付与でキャッシュ更新）
-CARDS_VER = write_cards_js(df)
+CARDS_VER = write_cards_js(df)  # 共通JSに一回だけ書き出し（キャッシュバスター付）
 
 def write_mode(dir_name: str, initial_sort_js_literal: str, title_text: str, cards_ver: str):
     sub = OUT_DIR / dir_name
@@ -589,15 +546,13 @@ def write_mode(dir_name: str, initial_sort_js_literal: str, title_text: str, car
     html = html_page(title_text, js, LOGO_URI, cards_ver)
     (sub / "index.html").write_text(html, encoding="utf-8")
 
-write_mode("default", "null", "デュエマ買取表", CARDS_VER)
-write_mode("price_desc", "'desc'", "デュエマ買取表（price_desc）", CARDS_VER)
-write_mode("price_asc", "'asc'", "デュエマ買取表（price_asc）", CARDS_VER)
+write_mode("default",   "null",   "デュエマ買取表",             CARDS_VER)
+write_mode("price_desc","'desc'", "デュエマ買取表（price_desc）", CARDS_VER)
+write_mode("price_asc", "'asc'",  "デュエマ買取表（price_asc）",  CARDS_VER)
 
 # ルートは default/ にリダイレクト
-(OUT_DIR / "index.html").write_text(
-    "<meta http-equiv='refresh' content='0; url=default/'>",
-    encoding="utf-8"
-)
+(OUT_DIR / "index.html").write_text("<meta http-equiv='refresh' content='0; url=default/'>", encoding="utf-8")
 
+print(f"[*] Mode: BUILD_THUMBS={'1' if BUILD_THUMBS else '0'}  PER_PAGE={PER_PAGE}")
 print(f"[LOGO] {'embedded' if LOGO_URI else 'not found (fallback text used)'}")
 print(f"[OK] 生成完了 → {OUT_DIR.resolve()} / 総件数{len(df)}")

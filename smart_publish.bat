@@ -2,53 +2,48 @@
 setlocal
 cd /d "%~dp0"
 
-REM ===== 設定 =====
 set "PY=C:\Users\user\AppData\Local\Programs\Python\Python313\python.exe"
 set "OUT_DIR=docs"
 set "PER_PAGE=80"
 
-REM Excel 候補（どれか存在するものを採用）
-set "EXCEL_DEFAULT=buylist.xlsx"
-set "EXCEL_ALT=buylist.xlsx"
-set "EXCEL_FALLBACK=C:\Users\user\Desktop\デュエマ買取表\buylist.xlsx"
-
-REM 既定：サムネあり＆Gitあり
+rem defaults
 set "BUILD_THUMBS=1"
 set "DO_GIT=1"
 set "FORCE=0"
+set "EXCEL_PATH="
 
-REM オプション:
-REM   fast  = サムネOFF（高速）
-REM   nogit = Git処理スキップ
-REM   force = Excelの変更有無に関わらず生成を実行
+rem Options: fast(thumb off) / nogit / force / <xlsx path>
 for %%A in (%*) do (
   if /I "%%~A"=="fast"  set "BUILD_THUMBS=0"
   if /I "%%~A"=="nogit" set "DO_GIT=0"
   if /I "%%~A"=="force" set "FORCE=1"
+  if exist "%%~fA" if /I "%%~xA"==".xlsx" set "EXCEL_PATH=%%~fA"
 )
 
-REM === Excel 自動検出 ===
-set "EXCEL_PATH="
-if exist "%EXCEL_DEFAULT%"  set "EXCEL_PATH=%EXCEL_DEFAULT%"
-if not defined EXCEL_PATH if exist "%EXCEL_ALT%"      set "EXCEL_PATH=%EXCEL_ALT%"
-if not defined EXCEL_PATH if exist "%EXCEL_FALLBACK%" set "EXCEL_PATH=%EXCEL_FALLBACK%"
-
+rem Excel autodetect（buylist.xlsx 優先）
+if not defined EXCEL_PATH if exist "buylist.xlsx" set "EXCEL_PATH=%CD%\buylist.xlsx"
+if not defined EXCEL_PATH if exist "data\buylist.xlsx" set "EXCEL_PATH=%CD%\data\buylist.xlsx"
 if not defined EXCEL_PATH (
-  echo [NG] Excelが見つかりません。
-  echo      %CD%\%EXCEL_DEFAULT%
-  echo      %CD%\%EXCEL_ALT%
-  echo      %EXCEL_FALLBACK%
+  for /f "delims=" %%F in ('dir /b /a:-d /o:-d "*.xlsx" 2^>nul') do (
+    set "EXCEL_PATH=%CD%\%%~F"
+    goto :got_excel
+  )
+)
+:got_excel
+if not defined EXCEL_PATH (
+  echo [NG] No Excel found. Put buylist.xlsx next to this bat,
+  echo      or pass a full path: smart_publish.bat fast "C:\full\path\buylist.xlsx"
   pause & exit /b 1
 )
 
-echo [*] Mode: BUILD_THUMBS=%BUILD_THUMBS% PER_PAGE=%PER_PAGE% DO_GIT=%DO_GIT% FORCE=%FORCE%
 echo [*] Excel: %EXCEL_PATH%
+echo [*] Mode: BUILD_THUMBS=%BUILD_THUMBS% PER_PAGE=%PER_PAGE% DO_GIT=%DO_GIT% FORCE=%FORCE%
 
-REM === 変更チェック（force=1 ならスキップせず生成） ===
+rem change detection
 set "NEW_HASH="
-for /f "tokens=1,*" %%H in ('certutil -hashfile "%EXCEL_PATH%" SHA256 ^| findstr /R "^[0-9A-F]"') do set "NEW_HASH=%%H"
+for /f "tokens=1" %%H in ('certutil -hashfile "%EXCEL_PATH%" SHA256 ^| findstr /R "^[0-9A-F]"') do set "NEW_HASH=%%H"
 if not defined NEW_HASH (
-  echo [NG] ハッシュ取得失敗: %EXCEL_PATH%
+  echo [NG] Hash failed: %EXCEL_PATH%
   pause & exit /b 1
 )
 
@@ -56,21 +51,22 @@ set "OLD_HASH="
 if exist ".publish.hash" set /p OLD_HASH=<.publish.hash
 
 if "%FORCE%"=="1" (
-  echo [!] FORCE有効 → 生成を実行
+  echo [!] FORCE=1 -> regenerate
 ) else if /I "%NEW_HASH%"=="%OLD_HASH%" (
-  echo [i] Excelに変更なし → 生成スキップ
+  echo [i] Excel unchanged -> skip generate
   goto :maybe_git
 )
 
-echo %NEW_HASH%>.publish.hash
+> ".publish.hash" echo %NEW_HASH%
 echo [*] Generate docs...
-set "BUILD_THUMBS=%BUILD_THUMBS%"
+set "EXCEL_PATH=%EXCEL_PATH%"
 set "OUT_DIR=%OUT_DIR%"
 set "PER_PAGE=%PER_PAGE%"
-set "EXCEL_PATH=%EXCEL_PATH%"
+set "BUILD_THUMBS=%BUILD_THUMBS%"
 "%PY%" gen_buylist.py || goto :fail
 
 :maybe_git
+where git >nul 2>&1 || set "DO_GIT=0"
 if "%DO_GIT%"=="1" (
   echo [*] Commit and push...
   if exist ".git\index.lock" del /f /q ".git\index.lock"
@@ -78,18 +74,17 @@ if "%DO_GIT%"=="1" (
   git gc --prune=now >nul 2>&1
 
   git add -A || goto :fail
-  git diff --cached --quiet && echo [i] 変更なし（commitスキップ） || git commit -m "update buylist %date% %time:~0,5%"
+  git diff --cached --quiet && echo [i] no changes || git commit -m "update buylist %date% %time:~0,5%"
   git pull --rebase --autostash origin main || goto :fail
   git push origin main || goto :fail
-  echo [OK] 公開反映 完了
+  echo [OK] publish done
 ) else (
-  echo [i] Git処理スキップ（nogit）
+  echo [i] Git skipped (not found or nogit)
 )
 
-pause
 exit /b 0
 
 :fail
-echo [NG] エラーが発生しました。上のログを確認してください。
+echo [NG] Error. Check the log above.
 pause
 exit /b 1
