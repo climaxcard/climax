@@ -1,70 +1,65 @@
 @echo off
 setlocal
+REM ========= カレントをこのbatの場所へ =========
 cd /d "%~dp0"
 
-rem --- Git ロック掃除 ---
+REM ========= 設定 =========
+set "PY=C:\Users\user\AppData\Local\Programs\Python\Python313\python.exe"
+set "EXCEL_DEFAULT=buylist.xlsx"
+set "EXCEL_FALLBACK=C:\Users\user\Desktop\デュエマ買取表\buylist.xlsx"
+set "OUT_DIR=docs"
+set "PER_PAGE=80"
+
+REM 引数: fast でサムネOFF（高速） / 既定はサムネON
+set "BUILD_THUMBS=1"
+if /I "%~1"=="fast" set "BUILD_THUMBS=0"
+
+echo [*] Mode: BUILD_THUMBS=%BUILD_THUMBS%  PER_PAGE=%PER_PAGE%
+echo.
+
+REM ========= Gitロック掃除 =========
 if exist ".git\index.lock" del /f /q ".git\index.lock"
-for %%L in (".git\shallow.lock" ".git\packed-refs.lock" ".git\logs\HEAD.lock") do (
-  if exist "%%~L" del /f /q "%%~L"
-)
+for %%L in (".git\shallow.lock" ".git\packed-refs.lock" ".git\logs\HEAD.lock") do if exist "%%~L" del /f /q "%%~L"
 git gc --prune=now >nul 2>&1
 
-rem --- ここからあなたの生成処理 ---
-rem pythonや生成コマンドなど（既存の “[*] Installing deps...” 以降）
+REM ========= Excelの場所を自動判定 =========
+set "EXCEL_PATH="
+if exist "%EXCEL_DEFAULT%" set "EXCEL_PATH=%EXCEL_DEFAULT%"
+if not defined EXCEL_PATH if exist "%EXCEL_FALLBACK%" set "EXCEL_PATH=%EXCEL_FALLBACK%"
+if not defined EXCEL_PATH (
+  echo [NG] Excelが見つかりません。
+  echo      %CD%\%EXCEL_DEFAULT%
+  echo      %EXCEL_FALLBACK%
+  pause
+  exit /b 1
+)
 
-rem --- コミット＆push（リモートが進んでても自動追従） ---
-git add -A || goto :gitfail
-git commit -m "update buylist %date% %time:~0,5%" || echo [i] 変更なし or commit失敗
-git pull --rebase --autostash origin main || goto :gitfail
-git push origin main || goto :gitfail
-echo [OK] push 完了
+REM ========= 生成 =========
+echo [*] Generate docs...
+set "EXCEL_PATH=%EXCEL_PATH%"
+set "OUT_DIR=%OUT_DIR%"
+set "PER_PAGE=%PER_PAGE%"
+set "BUILD_THUMBS=%BUILD_THUMBS%"
+"%PY%" gen_buylist.py || goto :fail
+
+REM ========= Git 反映 =========
+echo [*] Commit and push...
+git add -A || goto :fail
+git diff --cached --quiet && echo [i] 変更なし（commitスキップ） || git commit -m "update buylist %date% %time:~0,5%"
+git pull --rebase --autostash origin main || goto :fail
+git push origin main || goto :fail
+
+echo [OK] 公開反映 完了
+echo.
+REM ローカル表示
+start "" ".\docs\default\p1.html"
+REM 公開URL（使うならコメント解除）
+REM start "" "https://climaxcard.github.io/climax/default/p1.html"
+
+pause
 goto :eof
 
-:gitfail
-echo [NG] git 処理でエラー。ロックや競合を確認してください。
-exit /b 1
-
-)
-
-REM ===== Git 初期化（初回のみ）=====
-for /f %%A in ('git rev-parse --is-inside-work-tree 2^>NUL ^| findstr /i true') do set GIT=1
-if not defined GIT (
-  echo [*] init git repo...
-  git init || (echo [NG] git init 失敗 & pause & exit /b 1)
-  git branch -M main
-  git config user.name "climax-local"
-  git config user.email "climax@example.com"
-)
-
-REM .gitignore（Excel等をコミットしない）
-if not exist ".gitignore" (
-  > .gitignore echo *.xlsx
-  >> .gitignore echo data/
-  >> .gitignore echo buylist_pages_offline/
-)
-
-REM ===== リモート設定（毎回検証）=====
-git remote remove origin 2>nul
-git remote add origin "%REPO_URL%" || (
-  echo [NG] git remote add 失敗（REPO_URLを確認）
-  pause & exit /b 1
-)
-
-REM ===== コミット & プッシュ =====
-for /f %%i in ('powershell -NoProfile -Command "(Get-Date).ToString(\"yyyy-MM-dd HH:mm\")"') do set NOW=%%i
-git add docs .gitignore gen_buylist.py publish.bat || (
-  echo [NG] git add 失敗
-  pause & exit /b 1
-)
-git commit -m "update buylist !NOW!" || echo [i] 変更なし
-
-git push -u origin main || (
-  echo [NG] git push 失敗（URL/認証/ネットワークを確認）
-  echo  - URL: %REPO_URL%
-  echo  - 認証: GitHubのユーザー名＋PAT（Personal Access Token）
-  pause & exit /b 1
-)
-
-echo [OK] push 完了。公開URL: https://climaxcard.github.io/climax/
-echo 反映には数十秒〜数分かかることがあります（GitHub Pages）。
+:fail
+echo [NG] エラーが発生しました。上のログを確認してください。
 pause
+exit /b 1
