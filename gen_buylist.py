@@ -1,13 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-デュエマ買取表 静的ページ生成（豪華版・横4列・完全オフライン・軽量サムネ対応）
-- 白背景／黒文字（価格は赤）
-- ヘッダー固定 / スマホ：ロゴ左・タイトル右、画像は横4列
-- 検索強化：区切り無視、英字→かなエイリアス（complex→こんぷれっくす / c0br4→こぶら）
-- 一覧は軽量WebPサムネ（320px）を自家ホスト / クリック時のみフル解像度を読込
-- IntersectionObserver + data-src で可視域だけ読み込み
-- 最初の8枚だけ fetchpriority=high
-- CI対応：EXCEL_PATH/OUT_DIR/PER_PAGE/BUILD_THUMBS を環境変数で上書き可能
+デュエマ買取表 静的ページ生成（豪華版・横4列・完全オフライン・高速版）
+- 画像は軽量WebPサムネ（320px）を自家ホスト、クリック時のみフル解像度
+- IntersectionObserver + data-src + eagerLoad（初回見えてる分は即読み込み）
+- サムネ404時は自動でフル画像へフォールバック
+- 1モード=1HTMLのみ（p1〜pN廃止）、データは共通JS（assets/cards.min.js）へ分離
+- CI対応：EXCEL_PATH / OUT_DIR / PER_PAGE / BUILD_THUMBS を環境変数で上書き可
 """
 
 from pathlib import Path
@@ -15,14 +13,14 @@ from urllib.parse import urlparse, parse_qs
 import pandas as pd
 import html as html_mod
 import unicodedata as ud
-import math, base64, mimetypes, os, sys, hashlib, io
+import math, base64, mimetypes, os, sys, hashlib, io, json
 
 # ==== 依存（BUILD_THUMBS=1 の場合のみ使う）====
 try:
     import requests
     from PIL import Image
 except Exception:
-    # CIや初回で未インストールでもスクリプト自体は落とさない
+    # 未インストールでもスクリプト自体は落とさない
     requests = None
     Image = None
 
@@ -33,7 +31,7 @@ FALLBACK_WINDOWS = r"C:\Users\user\Desktop\デュエマ買取表\買取読み込
 EXCEL_PATH = os.getenv("EXCEL_PATH", DEFAULT_EXCEL)
 SHEET_NAME = os.getenv("SHEET_NAME", "シート1")
 OUT_DIR    = Path(os.getenv("OUT_DIR", "docs"))
-PER_PAGE   = int(os.getenv("PER_PAGE", "80"))
+PER_PAGE   = int(os.getenv("PER_PAGE", "80"))  # 画面内ページング用（データは1HTMLに全件）
 BUILD_THUMBS = os.getenv("BUILD_THUMBS", "1") == "1"  # サムネ生成ON/OFF
 
 # 列番号（0始まり）
@@ -134,7 +132,8 @@ def ensure_thumb(url: str) -> str|None:
     THUMB_DIR.mkdir(parents=True, exist_ok=True)
     fname = url_to_hash(url) + ".webp"
     outp = THUMB_DIR / fname
-    if outp.exists(): return f"../assets/thumbs/{fname}"
+    if outp.exists():
+        return f"assets/thumbs/{fname}"  # 相対はJS側で補正するのでここは基準パスで返す
 
     if not (requests and Image):
         # 依存が無い場合はスキップしてフルURLを使わせる
@@ -149,7 +148,7 @@ def ensure_thumb(url: str) -> str|None:
         im = im.resize((THUMB_W, max(1,new_h)), Image.LANCZOS)
         outp.parent.mkdir(parents=True, exist_ok=True)
         im.save(outp, "WEBP", quality=70, method=6)
-        return f"../assets/thumbs/{fname}"
+        return f"assets/thumbs/{fname}"
     except Exception:
         return None
 
@@ -250,7 +249,7 @@ nav.simple strong{color:#111;user-select:none}
 small.note{color:var(--muted)}
 """
 
-# ========= JS（遅延読込＋優先度＋検索強化） =========
+# ========= JS（共通データ __CARDS__ を読む / 遅延読込＋保険） =========
 base_js = r"""
 (function(){
   const header = document.querySelector('header');
@@ -277,12 +276,8 @@ base_js = r"""
   const viewerImg = document.getElementById('viewerImg');
   const viewerClose = document.getElementById('viewerClose');
 
-  let ALL=[];
-  try{
-    const tag=document.getElementById('cardsData');
-    ALL = JSON.parse(tag?.textContent || '[]');
-    if(!Array.isArray(ALL)) ALL=[];
-  }catch(e){ ALL=[]; }
+  // 共通データ読込（assets/cards.min.js が window.__CARDS__ を定義）
+  let ALL = Array.isArray(window.__CARDS__) ? window.__CARDS__ : [];
 
   const SEP_RE = /[\s\u30FB\u00B7·/／\-_—–−]+/g;
   function kataToHira(str){ return (str||'').replace(/[\u30A1-\u30FA]/g, ch => String.fromCharCode(ch.charCodeAt(0)-0x60)); }
@@ -324,7 +319,7 @@ base_js = r"""
     const full = it.image?it.image:'';
     let thumb = it.thumb || full;
     if (thumb && !/^https?:\/\//.test(thumb) && !thumb.startsWith('../')) {
-      thumb = '../' + thumb;  // docs/<mode>/pX.html から見て 1階層上
+      thumb = '../' + thumb;  // docs/<mode>/index.html から見て 1階層上
     }
     return `
   <article class="card">
@@ -485,21 +480,24 @@ base_js = r"""
 })();
 """
 
+# ===== 共通データを書き出し（assets/cards.min.js） =====
+def write_cards_js(df: pd.DataFrame) -> str:
+    data = df[["name","pack","code","rarity","booster","price","image","thumb","_s"]].to_dict("records")
+    payload = json.dumps(data, ensure_ascii=False, separators=(",",":"))
+    ver = hashlib.md5(payload.encode("utf-8")).hexdigest()[:8]
+    assets = OUT_DIR / "assets"
+    assets.mkdir(parents=True, exist_ok=True)
+    (assets / "cards.min.js").write_text("window.__CARDS__="+payload, encoding="utf-8")
+    return ver
 
-# ===== JSON埋め込みとHTML =====
-def json_for_embed(df: pd.DataFrame) -> str:
-    cols = ["name","pack","code","rarity","booster","price","image","thumb","_s"]
-    txt = df[cols].to_json(force_ascii=False, orient="records")
-    return txt.replace("</", "<\\/").replace("\u2028","\\u2028").replace("\u2029","\\u2029")
-
-def html_page(title: str, inline_json: str, js_source: str, logo_uri: str) -> str:
+# ===== HTML（JSONは外部JSから読む） =====
+def html_page(title: str, js_source: str, logo_uri: str, cards_ver: str) -> str:
     shop_svg = "<svg viewBox='0 0 24 24' aria-hidden='true' fill='currentColor'><path d='M3 9.5V8l2.2-3.6c.3-.5.6-.7 1-.7h11.6c.4 0 .7.2.9.6L21 8v1.5c0 1-.8 1.8-1.8 1.8-.9 0-1.6-.6-1.8-1.4-.2.8-.9 1.4-1.8 1.4s-1.6-.6-1.8-1.4c-.2.8-.9 1.4-1.8 1.4s-1.6-.6-1.8-1.4c-.2.8-.9 1.4-1.8 1.4s-1.6-.6-1.8-1.4c-.2.8-.9 1.4-1.8 1.4C3.8 11.3 3 10.5 3 9.5zM5 12.5h14V20c0 .6-.4 1-1 1H6c-.6 0-1-.4-1-1v-7.5zm4 1.5v5h6v-5H9zM6.3 5.2 5 7.5h14l-1.3-2.3H6.3z'/></svg>"
     login_svg= "<svg viewBox='0 0 24 24' aria-hidden='true' fill='currentColor'><path d='M12 12a5 5 0 1 0-5-5 5 5 0 0 0 5 5zm0 2c-4.418 0-8 2.239-8 5v2h16v-2c0-2.761-3.582-5-8-5z'/></svg>"
 
     parts = []
     parts.append("<!doctype html><html lang='ja'><head><meta charset='utf-8'>")
     parts.append("<meta name='viewport' content='width=device-width,initial-scale=1'>")
-    # 画像ホストへの前倒し接続
     parts.append("<link rel='preconnect' href='https://dm.takaratomy.co.jp' crossorigin>")
     parts.append("<link rel='dns-prefetch' href='//dm.takaratomy.co.jp'>")
     parts.append("<style>"); parts.append(base_css); parts.append("</style></head><body>")
@@ -532,29 +530,34 @@ def html_page(title: str, inline_json: str, js_source: str, logo_uri: str) -> st
     parts.append("  <nav class='simple'></nav><div id='grid' class='grid grid-img'></div><nav class='simple'></nav>")
     parts.append("  <small class='note'>このページ内のデータのみで検索・並び替え・ページングできます。画像クリックで拡大表示。</small>")
     parts.append("</main>")
-    parts.append(f"<script id='cardsData' type='application/json'>{inline_json}</script>")
+    # 共通データ（各モード配下HTML → ../assets/）
+    parts.append(f"<script src='../assets/cards.min.js?v={cards_ver}'></script>")
     parts.append("<div id='viewer' class='viewer'><div class='vc'><img id='viewerImg' alt=''><button id='viewerClose' class='close'>×</button></div></div>")
-    parts.append("<script>"); parts.append(js_source); parts.append("</script></body></html>")
+    parts.append("<script>"); parts.append(base_js); parts.append("</script></body></html>")
     return "".join(parts)
 
 # ========= 出力 =========
 OUT_DIR.mkdir(parents=True, exist_ok=True)
-inline_json_safe = json_for_embed(df)
 
-def write_mode(dir_name: str, initial_sort_js_literal: str, title_text: str):
+# データを共通JSに一回だけ書き出し（バージョン付与でキャッシュ更新）
+CARDS_VER = write_cards_js(df)
+
+def write_mode(dir_name: str, initial_sort_js_literal: str, title_text: str, cards_ver: str):
     sub = OUT_DIR / dir_name
     sub.mkdir(parents=True, exist_ok=True)
     js = base_js.replace("__PER_PAGE__", str(PER_PAGE)).replace("__INITIAL_SORT__", initial_sort_js_literal)
-
-    # ← 各モード1ファイルだけ出力（index.html）
-    html = html_page(title_text, inline_json_safe, js, LOGO_URI)
+    html = html_page(title_text, js, LOGO_URI, cards_ver)
     (sub / "index.html").write_text(html, encoding="utf-8")
 
+write_mode("default", "null", "デュエマ買取表", CARDS_VER)
+write_mode("price_desc", "'desc'", "デュエマ買取表（price_desc）", CARDS_VER)
+write_mode("price_asc", "'asc'", "デュエマ買取表（price_asc）", CARDS_VER)
 
-write_mode("default", "null", "デュエマ買取表")
-write_mode("price_desc", "'desc'", "デュエマ買取表（price_desc）")
-write_mode("price_asc", "'asc'", "デュエマ買取表（price_asc）")
-(OUT_DIR / "index.html").write_text("<meta http-equiv='refresh' content='0; url=default/p1.html'>", encoding="utf-8")
+# ルートは default/ にリダイレクト
+(OUT_DIR / "index.html").write_text(
+    "<meta http-equiv='refresh' content='0; url=default/'>",
+    encoding="utf-8"
+)
 
 print(f"[LOGO] {'embedded' if LOGO_URI else 'not found (fallback text used)'}")
-print(f"[OK] 生成完了 → {OUT_DIR.resolve()} / 1ページ{PER_PAGE}件, 総件数{len(df)}")
+print(f"[OK] 生成完了 → {OUT_DIR.resolve()} / 総件数{len(df)}")
