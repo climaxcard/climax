@@ -15,6 +15,46 @@ import html as html_mod
 import unicodedata as ud
 import math, base64, mimetypes, os, sys, hashlib, io, json
 
+# 先頭の import に追加
+import glob, time
+
+# これを gen_buylist.py に追加（load_excel の上あたり）
+def resolve_excel_path(pref: str|None) -> Path:
+    cands = []
+    if pref: cands.append(Path(pref))
+    cands += [
+        Path("buylist.xlsx"),
+        Path("買取読み込みファイル.xlsx"),
+        Path(DEFAULT_EXCEL),
+        Path(FALLBACK_WINDOWS),
+    ]
+    for p in cands:
+        if p.exists() and p.is_file():
+            return p
+    # カレント内の最新 .xlsx を最後の手段として採用
+    files = sorted((Path(p) for p in glob.glob("*.xlsx")), key=lambda x: x.stat().st_mtime, reverse=True)
+    if files:
+        return files[0]
+    # ダメなら詳細を出して終了
+    raise FileNotFoundError(
+        "Excelが見つかりません。\n"
+        f"  試した候補:\n"
+        + "\n".join("   - "+str(p) for p in cands)
+    )
+
+# load_excel をこれに置き換え
+def load_excel(path_str: str, sheet_name: str|None) -> pd.DataFrame:
+    p = resolve_excel_path(path_str if path_str else None)
+    try:
+        if sheet_name:
+            return pd.read_excel(p, sheet_name=sheet_name, header=None, engine="openpyxl")
+        xls = pd.ExcelFile(p, engine="openpyxl")
+        return pd.read_excel(xls, sheet_name=xls.sheet_names[0], header=None, engine="openpyxl")
+    except Exception:
+        xls = pd.ExcelFile(p, engine="openpyxl")
+        return pd.read_excel(xls, sheet_name=xls.sheet_names[0], header=None, engine="openpyxl")
+
+
 # ==== 依存（BUILD_THUMBS=1 の場合のみ使う）====
 try:
     import requests
