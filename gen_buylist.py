@@ -26,7 +26,7 @@ except Exception:
 
 # ========= 設定 =========
 DEFAULT_EXCEL = "data/買取読み込みファイル.xlsx"
-FALLBACK_WINDOWS = r"C:\Users\user\Desktop\デュエマ買取表\買取読み込みファイル.xlsx"
+FALLBACK_WINDOWS = r"C:\Users\user\Desktop\buylist.xlsx"
 
 EXCEL_PATH = os.getenv("EXCEL_PATH", DEFAULT_EXCEL)
 SHEET_NAME = os.getenv("SHEET_NAME", "シート1")
