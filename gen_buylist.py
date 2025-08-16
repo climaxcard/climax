@@ -273,7 +273,7 @@ nav.simple strong{color:#111;user-select:none}
 small.note{color:var(--muted)}
 """
 
-# ========= JS（欄ごと一致＋スマホ最適化＋遅延読込＋画像ON/OFF修正） =========
+# ========= JS（欄ごと一致＋スマホ最適化＋遅延読込＋画像ON/OFF修正＋アルファベット検索対応） =========
 base_js = r"""
 (function(){
   const header = document.querySelector('header');
@@ -329,11 +329,30 @@ base_js = r"""
   function kataToHira(str){ return (str||'').replace(/[\u30A1-\u30FA]/g, ch => String.fromCharCode(ch.charCodeAt(0)-0x60)); }
   const kanjiReadingMap = { "伝説":"でんせつ" };
   const latinAliasMap = { "complex": "こんぷれっくす", "c0br4": "こぶら" };
+
+  // かな正規化（既存）
   function normalizeForSearch(s){
     s = (s||'').normalize('NFKC').toLowerCase();
     for(const [k,v] of Object.entries(latinAliasMap)){ s = s.split(k).join(v); }
     for(const [k,v] of Object.entries(kanjiReadingMap)){ s = s.split(k).join(v); }
     s = kataToHira(s).replace(SEP_RE, '');
+    return s;
+  }
+
+  // ★追加：ラテン文字用の正規化（アルファベット検索を通す）
+  function normalizeLatin(s){
+    s = (s||'').normalize('NFKC').toLowerCase();
+    // 代表的なleetも軽く補正（c0br4対策など）
+    s = s
+      .replace(/0/g,'o')
+      .replace(/1/g,'l')   // 必要なら 'i' に変更可
+      .replace(/3/g,'e')
+      .replace(/4/g,'a')
+      .replace(/5/g,'s')
+      .replace(/7/g,'t');
+    s = s.replace(SEP_RE, '');
+    // ラテンのみ残す（検索のノイズ防止）
+    s = s.replace(/[^a-z0-9]/g,'');
     return s;
   }
 
@@ -363,10 +382,16 @@ base_js = r"""
   // ★欄ごと一致用の正規化キャッシュ（初期化時に1回だけ）
   ALL = ALL.map(it => ({
     ...it,
+    // かな側
     _name:        normalizeForSearch(it.name || ""),
     _code:        normalizeForSearch(it.code || ""),
     _packbooster: normalizeForSearch([it.pack || "", it.booster || ""].join(" ")),
-    _rarity:      normalizeForSearch(it.rarity || "")
+    _rarity:      normalizeForSearch(it.rarity || ""),
+    // ★ラテン側（アルファベット検索はこちらに当てる）
+    _name_lat:        normalizeLatin(it.name || ""),
+    _code_lat:        normalizeLatin(it.code || ""),
+    _packbooster_lat: normalizeLatin([it.pack || "", it.booster || ""].join(" ")),
+    _rarity_lat:      normalizeLatin(it.rarity || "")
   }));
 
   let VIEW=[]; let page=1; let currentSort=__INITIAL_SORT__;
@@ -443,18 +468,32 @@ base_js = r"""
     imgs.forEach(img=>{ if(!img.src){ img.src = img.getAttribute('data-src'); img.removeAttribute('data-src'); }});
   }
 
-  // ★欄ごと一致に戻した apply
   function apply(){
-    const qName   = normalizeForSearch(nameQ.value||'');
-    const qCode   = normalizeForSearch(codeQ.value||'');
-    const qPack   = normalizeForSearch(packQ.value||'');
-    const qRarity = normalizeForSearch(rarityQ.value||'');
+    // かな側クエリ
+    const qNameK   = normalizeForSearch(nameQ.value||'');
+    const qCodeK   = normalizeForSearch(codeQ.value||'');
+    const qPackK   = normalizeForSearch(packQ.value||'');
+    const qRarityK = normalizeForSearch(rarityQ.value||'');
+
+    // ★ラテン側クエリ（アルファベット一致用）
+    const qNameL   = normalizeLatin(nameQ.value||'');
+    const qCodeL   = normalizeLatin(codeQ.value||'');
+    const qPackL   = normalizeLatin(packQ.value||'');
+    const qRarityL = normalizeLatin(rarityQ.value||'');
+
+    const matchEither = (kana, latin, qK, qL) => {
+      if (!qK && !qL) return true;
+      let ok = false;
+      if (qK && kana.includes(qK)) ok = true;
+      if (qL && latin.includes(qL)) ok = true;
+      return ok;
+    };
 
     VIEW = ALL.filter(it =>
-      (!qName   || it._name.includes(qName)) &&
-      (!qCode   || it._code.includes(qCode)) &&
-      (!qPack   || it._packbooster.includes(qPack)) &&
-      (!qRarity || it._rarity.includes(qRarity))
+      matchEither(it._name,        it._name_lat,        qNameK,   qNameL)   &&
+      matchEither(it._code,        it._code_lat,        qCodeK,   qCodeL)   &&
+      matchEither(it._packbooster, it._packbooster_lat, qPackK,   qPackL)   &&
+      matchEither(it._rarity,      it._rarity_lat,      qRarityK, qRarityL)
     );
 
     if(currentSort==='desc') VIEW.sort((a,b)=>(b.price||0)-(a.price||0));
