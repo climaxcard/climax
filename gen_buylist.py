@@ -2,7 +2,7 @@
 """
 デュエマ買取表 静的ページ生成（豪華版・横4列・完全オフライン・高速スマホ最適化）
 - データは assets/cards.min.js（短キー）に分離、HTMLは各モード1枚のみ
-- 画像は軽量WebPサムネ（320px）を自家ホスト、遅延読込、失敗時はフル画像へ
+- 画像は軽量WebPサムネ（自家ホスト）、遅延読込、失敗時はフル画像へ
 - スマホ/遅回線/低コア端末で PER_PAGE と eagerLoad を自動調整
 - 検索は「入力欄ごと」に項目別マッチ（名前/型番/弾+ブースター/レア）
 - Excel は buylist.xlsx を最優先で自動検出
@@ -50,7 +50,7 @@ COL_IMGURL = 9
 
 # サムネ設定
 THUMB_DIR = OUT_DIR / "assets" / "thumbs"
-THUMB_W = 480  # 一覧用幅（← 320 → 480 にアップ、横4列のまま高精細）
+THUMB_W = 600  # ← 指定どおり 600 にアップ（横4列のまま高精細）
 
 # ---- ロゴ探索 ----
 def find_logo_path():
@@ -248,7 +248,7 @@ input.search:focus{ box-shadow:0 0 0 2px rgba(17,24,39,.08) }
 .th img{width:100%;height:100%;object-fit:cover;display:block;background:#f3f4f6}
 .b{padding:10px 12px}
 .n{font-size:14px;font-weight:800;line-height:1.35;margin:0 0 6px;color:#111}
-.n .code{margin-left:6px;font-weight:700;font-size:12px;color:var(--muted)} /* ★追加：型番の見た目 */
+.n .code{margin-left:6px;font-weight:700;font-size:12px;color:var(--muted)}
 .meta{font-size:11px;color:var(--muted);word-break:break-word}
 .p{margin-top:6px;display:flex;flex-wrap:wrap}
 .mx{font-weight:1000;color:var(--accent);font-size:clamp(16px, 2.4vw, 22px);line-height:1.05;text-shadow:none;word-break:break-word; overflow-wrap:anywhere;font-variant-numeric:tabular-nums;white-space:nowrap;display:inline-block;max-width:100%}
@@ -269,9 +269,9 @@ nav.simple strong{color:#111;user-select:none}
   .center-ttl{ grid-area:title; font-size:clamp(20px, 7vw, 28px); line-height:1.1; text-align:left; white-space:nowrap }
   .actions{ grid-area:actions; justify-content:center }
 
-  /* ★ スマホ時に実質カード幅を最大化：左右余白と隙間を縮小（4列は維持） */
-  .wrap{ padding:8px } /* ← 12px 16px から縮小して横幅を確保 */
-  .grid.grid-img{grid-template-columns:repeat(4, minmax(0,1fr)); gap:4px} /* ← gap:8px → 4px */
+  /* ★ 指定どおり：スマホで余白＆隙間をさらに削ってカード幅を最大化（4列維持） */
+  .wrap{ padding:4px }                 /* ← 8px → 4px */
+  .grid.grid-img{ gap:2px }            /* ← 4px → 2px */
 
   .b{padding:6px}.n{font-size:11px}
   .mx{ font-size:clamp(12px, 4.2vw, 16px); white-space:nowrap }
@@ -318,7 +318,6 @@ base_js = r"""
   const __PER = __PER_PAGE__;
   const PER_PAGE_ADJ = (isMobile || slowNet || cores <= 4) ? Math.min(__PER, 48) : __PER;
 
-  // eagerLoad 数
   function pick(nLo, nMd, nHi){
     return (cores <= 4) ? nLo : ((isMobile || slowNet) ? nMd : nHi);
   }
@@ -333,7 +332,6 @@ base_js = r"""
   if (saved === null) showImages = true;
   else showImages = (saved === '1');
 
-  // クエリ正規化
   const SEP_RE = /[\s\u30FB\u00B7·/／\-_—–−]+/g;
   function kataToHira(str){ return (str||'').replace(/[\u30A1-\u30FA]/g, ch => String.fromCharCode(ch.charCodeAt(0)-0x60)); }
   const kanjiReadingMap = { "伝説":"でんせつ" };
@@ -346,29 +344,18 @@ base_js = r"""
     s = kataToHira(s).replace(SEP_RE, '');
     return s;
   }
-
   function normalizeLatin(s){
-    s = (s||'').normalize('NFKC').toLowerCase();
-    s = s
-      .replace(/0/g,'o')
-      .replace(/1/g,'l')
-      .replace(/3/g,'e')
-      .replace(/4/g,'a')
-      .replace(/5/g,'s')
-      .replace(/7/g,'t');
-    s = s.replace(SEP_RE, '');
-    s = s.replace(/[^a-z0-9]/g,'');
+    s = (s||'').normalize('NFKC').toLowerCase()
+      .replace(/0/g,'o').replace(/1/g,'l').replace(/3/g,'e').replace(/4/g,'a').replace(/5/g,'s').replace(/7/g,'t')
+      .replace(SEP_RE, '').replace(/[^a-z0-9]/g,'');
     return s;
   }
 
   function fmtYen(n){ return (n==null||n==='')?'-':('¥'+parseInt(n,10).toLocaleString()); }
   function escHtml(s){
-    return (s||'').replace(/[&<>\"']/g, m => ({
-      "&":"&amp;", "<":"&lt;", ">":"&gt;", "\"":"&quot;", "'":"&#39;"
-    }[m]));
+    return (s||'').replace(/[&<>\"']/g, m => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", "\"":"&quot;", "'":"&#39;" }[m]));
   }
 
-  // 共通データ（window.__CARDS__ = [{n,p,c,r,b,pr,i,t,s}]）
   function norm(it){
     return {
       name: it.n ?? it.name ?? "",
@@ -384,7 +371,6 @@ base_js = r"""
   }
   let ALL = Array.isArray(window.__CARDS__) ? window.__CARDS__.map(norm) : [];
 
-  // ★欄ごと一致用の正規化キャッシュ
   ALL = ALL.map(it => ({
     ...it,
     _name:        normalizeForSearch(it.name || ""),
@@ -410,15 +396,12 @@ base_js = r"""
     });
   }
 
-  // 画像カード（相対サムネは ../ を付与、404→フルへフォールバック）
   function cardHTML_img(it){
     const nameEsc = escHtml(it.name||'');
     const full = it.image||'';
     const codeEsc = escHtml(it.code||'');
     let thumb = it.thumb || full;
-    if (thumb && !/^https?:\/\//.test(thumb) && !thumb.startsWith('../')) {
-      thumb = '../' + thumb;
-    }
+    if (thumb && !/^https?:\/\//.test(thumb) && !thumb.startsWith('../')) thumb = '../' + thumb;
     const codeHtml = codeEsc ? `<span class="code">[${codeEsc}]</span>` : '';
     return `
   <article class="card">
@@ -448,7 +431,6 @@ base_js = r"""
   </article>`;
   }
 
-  // IO: 可視域に入ったら読み込む
   let io;
   function setupIO(){
     if (io) io.disconnect();
@@ -557,7 +539,6 @@ base_js = r"""
     btnImg.classList.toggle('active', showImages);
     btnImg.setAttribute('aria-pressed', showImages ? 'true' : 'false');
   }
-
   function toggleImages(e){
     if (e) { e.preventDefault(); e.stopPropagation(); }
     showImages = !showImages;
@@ -589,7 +570,6 @@ base_js = r"""
 
 # ===== 共通データを書き出し（assets/cards.min.js） =====
 def write_cards_js(df: pd.DataFrame) -> str:
-    # 必要列の用意
     for c in ["name","pack","code","rarity","booster","price","image","thumb","s"]:
         if c not in df.columns:
             df[c] = "" if c!="price" else None
@@ -666,7 +646,6 @@ def html_page(title: str, js_source: str, logo_uri: str, cards_ver: str) -> str:
     parts.append("<script>if(!Array.isArray(window.__CARDS__)){document.write(\"<p style='color:#dc2626;padding:16px'>データが読み込めませんでした。<code>docs/assets/cards.min.js</code> の存在とパスを確認してください。</p>\");}</script>")
 
     parts.append("<div id='viewer' class='viewer'><div class='vc'><img id='viewerImg' alt=''><button id='viewerClose' class='close'>×</button></div></div>")
-    # ロジックは defer
     parts.append("<script defer>"); parts.append(js_source); parts.append("</script></body></html>")
     return "".join(parts)
 
@@ -685,7 +664,6 @@ def write_mode(dir_name: str, initial_sort_js_literal: str, title_text: str, car
 
 # ★ default は初期表示を「価格高い順」に変更
 write_mode("default", "'desc'", "デュエマ買取表", CARDS_VER)
-# 既存モードは従来どおり
 write_mode("price_desc", "'desc'", "デュエマ買取表（price_desc）", CARDS_VER)
 write_mode("price_asc",  "'asc'",  "デュエマ買取表（price_asc）",  CARDS_VER)
 
