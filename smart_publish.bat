@@ -39,49 +39,73 @@ if not defined EXCEL_PATH (
 echo [*] Excel: %EXCEL_PATH%
 echo [*] Mode: BUILD_THUMBS=%BUILD_THUMBS% PER_PAGE=%PER_PAGE% DO_GIT=%DO_GIT% FORCE=%FORCE%
 
-rem change detection (Excel)
+rem --- calc SHA256 ---
 set "NEW_HASH="
-for /f "tokens=1" %%H in ('certutil -hashfile "%EXCEL_PATH%" SHA256 ^| findstr /R "^[0-9A-F]"') do set "NEW_HASH=%%H"
+for /f "tokens=1" %%H in ('certutil -hashfile "%EXCEL_PATH%" SHA256 ^| findstr /R "^[0-9A-Fa-f]"') do set "NEW_HASH=%%H"
 if not defined NEW_HASH (
   echo [NG] Hash failed: %EXCEL_PATH%
   pause & exit /b 1
 )
+
+rem --- load previous (2-line format: PATH then HASH). Old 1-line format also許容 ---
+set "OLD_PATH="
 set "OLD_HASH="
-if exist ".publish.hash" set /p OLD_HASH=<.publish.hash
-
-if "%FORCE%"=="1" (
-  echo [!] FORCE=1 -> regenerate
-) else if /I "%NEW_HASH%"=="%OLD_HASH%" (
-  echo [i] Excel unchanged -> may skip generate
-) else (
-  > ".publish.hash" echo %NEW_HASH%
+if exist ".publish.hash" (
+  for /f "usebackq tokens=* delims=" %%L in (".publish.hash") do (
+    if not defined OLD_PATH (
+      set "OLD_PATH=%%L"
+    ) else if not defined OLD_HASH (
+      set "OLD_HASH=%%L"
+    )
+  )
+  rem 旧形式（1行＝HASHのみ）なら補正
+  if defined OLD_PATH if not defined OLD_HASH (
+    set "OLD_HASH=%OLD_PATH%"
+    set "OLD_PATH="
+  )
 )
 
-rem ===== Build =====
-if "%FORCE%"=="1" (
-  set "NEED_BUILD=1"
-) else if /I "%NEW_HASH%"=="%OLD_HASH%" (
-  set "NEED_BUILD=0"
-) else (
-  set "NEED_BUILD=1"
+rem --- mtime check helper ---
+set "NEED_BUILD="
+set "STAMP_FILE=%OUT_DIR%\.build_stamp.txt"
+
+rem 条件1: 強制
+if "%FORCE%"=="1" set "NEED_BUILD=1"
+
+rem 条件2: Excelパスが変わった
+if not defined NEED_BUILD if /I not "%EXCEL_PATH%"=="%OLD_PATH%" set "NEED_BUILD=1"
+
+rem 条件3: ハッシュが変わった
+if not defined NEED_BUILD if /I not "%NEW_HASH%"=="%OLD_HASH%" set "NEED_BUILD=1"
+
+rem 条件4: ハッシュ同じでも、Excelがビルドスタンプより新しければ再ビルド
+if not defined NEED_BUILD if exist "%STAMP_FILE%" (
+  for %%A in ("%EXCEL_PATH%") do set "EXCEL_MTIME=%%~tA"
+  for %%B in ("%STAMP_FILE%") do set "STAMP_MTIME=%%~tB"
+  if "%EXCEL_MTIME%" GTR "%STAMP_MTIME%" set "NEED_BUILD=1"
 )
+
+if not defined NEED_BUILD set "NEED_BUILD=0"
 
 if "%NEED_BUILD%"=="1" (
   echo [*] Generate docs...
-  set "EXCEL_PATH=%EXCEL_PATH%"
+  rem 新フォーマットで保存（1行目=PATH, 2行目=HASH）
+  > ".publish.hash" (echo %EXCEL_PATH%&echo %NEW_HASH%)
+
   set "OUT_DIR=%OUT_DIR%"
   set "PER_PAGE=%PER_PAGE%"
   set "BUILD_THUMBS=%BUILD_THUMBS%"
-  "%PY%" gen_buylist.py || goto :fail
+
+  rem ★ EXCELのフルパスをPythonに引数で渡す ★
+  "%PY%" gen_buylist.py "%EXCEL_PATH%" || goto :fail
 ) else (
   echo [i] Excel unchanged -> build step skipped
 )
 
-rem Build stamp to force a tiny diff so Pages redeploys
+rem Build stamp to force tiny diff so Pages redeploys
 if not exist "%OUT_DIR%" mkdir "%OUT_DIR%"
-> "%OUT_DIR%\.build_stamp.txt" echo built at %date% %time% from "%EXCEL_PATH%"
+> "%STAMP_FILE%" echo built at %date% %time% from "%EXCEL_PATH%"
 
-rem Basic sanity: docs/index.html should exist for Pages(doc) publish
 if not exist "%OUT_DIR%\index.html" (
   echo [WARN] %OUT_DIR%\index.html not found. If GitHub Pages is set to 'docs', site won't update.
 )
