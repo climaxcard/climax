@@ -35,6 +35,10 @@ OUT_DIR    = Path(os.getenv("OUT_DIR", "docs"))
 PER_PAGE   = int(os.getenv("PER_PAGE", "80"))  # 画面内ページング単位
 BUILD_THUMBS = os.getenv("BUILD_THUMBS", "1") == "1"  # サムネ生成ON/OFF
 
+# ★ 追加：argv[1] があれば EXCEL_PATH を上書き（バッチからのフルパス対応）
+if len(sys.argv) > 1 and sys.argv[1]:
+    EXCEL_PATH = sys.argv[1]
+
 # 列番号（0始まり）
 COL_NAME   = 1
 COL_PACK   = 2
@@ -244,6 +248,7 @@ input.search:focus{ box-shadow:0 0 0 2px rgba(17,24,39,.08) }
 .th img{width:100%;height:100%;object-fit:cover;display:block;background:#f3f4f6}
 .b{padding:10px 12px}
 .n{font-size:14px;font-weight:800;line-height:1.35;margin:0 0 6px;color:#111}
+.n .code{margin-left:6px;font-weight:700;font-size:12px;color:var(--muted)} /* ★追加：型番の見た目 */
 .meta{font-size:11px;color:var(--muted);word-break:break-word}
 .p{margin-top:6px;display:flex;flex-wrap:wrap}
 .mx{font-weight:1000;color:var(--accent);font-size:clamp(16px, 2.4vw, 22px);line-height:1.05;text-shadow:none;word-break:break-word; overflow-wrap:anywhere;font-variant-numeric:tabular-nums;white-space:nowrap;display:inline-block;max-width:100%}
@@ -317,12 +322,14 @@ base_js = r"""
   const eager2 = pick(8, 16, 32);
 
   // 初回はモバイル/遅回線なら画像OFF。旧 'true'/'false' を '1'/'0' に正規化
+    // ★初期表示は必ず画像ON
   let showImages;
   let saved = localStorage.getItem('showImages');
   if (saved === 'true')  { localStorage.setItem('showImages','1'); saved = '1'; }
   if (saved === 'false') { localStorage.setItem('showImages','0'); saved = '0'; }
-  if (saved === null) showImages = !(isMobile || slowNet);
+  if (saved === null) showImages = true;   // ←ここを変更（デフォルトで ON）
   else showImages = (saved === '1');
+
 
   // クエリ正規化
   const SEP_RE = /[\s\u30FB\u00B7·/／\-_—–−]+/g;
@@ -342,16 +349,14 @@ base_js = r"""
   // ★追加：ラテン文字用の正規化（アルファベット検索を通す）
   function normalizeLatin(s){
     s = (s||'').normalize('NFKC').toLowerCase();
-    // 代表的なleetも軽く補正（c0br4対策など）
     s = s
       .replace(/0/g,'o')
-      .replace(/1/g,'l')   // 必要なら 'i' に変更可
+      .replace(/1/g,'l')
       .replace(/3/g,'e')
       .replace(/4/g,'a')
       .replace(/5/g,'s')
       .replace(/7/g,'t');
     s = s.replace(SEP_RE, '');
-    // ラテンのみ残す（検索のノイズ防止）
     s = s.replace(/[^a-z0-9]/g,'');
     return s;
   }
@@ -411,10 +416,12 @@ base_js = r"""
   function cardHTML_img(it){
     const nameEsc = escHtml(it.name||'');
     const full = it.image||'';
+    const codeEsc = escHtml(it.code||'');  // ★型番
     let thumb = it.thumb || full;
     if (thumb && !/^https?:\/\//.test(thumb) && !thumb.startsWith('../')) {
       thumb = '../' + thumb; // docs/<mode>/index.html から見て1階層上
     }
+    const codeHtml = codeEsc ? `<span class="code">[${codeEsc}]</span>` : '';
     return `
   <article class="card">
     <div class="th" data-full="${full}">
@@ -424,7 +431,7 @@ base_js = r"""
            onerror="this.onerror=null;var p=this.closest('.th');this.src=p?p.getAttribute('data-full'):this.src;">
     </div>
     <div class="b">
-      <h3 class="n">${nameEsc}</h3>
+      <h3 class="n">${nameEsc}${codeHtml}</h3>
       <div class="p"><span class="mx">${fmtYen(it.price)}</span></div>
     </div>
   </article>`;
@@ -475,7 +482,7 @@ base_js = r"""
     const qPackK   = normalizeForSearch(packQ.value||'');
     const qRarityK = normalizeForSearch(rarityQ.value||'');
 
-    // ★ラテン側クエリ（アルファベット一致用）
+    // ラテン側クエリ
     const qNameL   = normalizeLatin(nameQ.value||'');
     const qCodeL   = normalizeLatin(codeQ.value||'');
     const qPackL   = normalizeLatin(packQ.value||'');
@@ -556,7 +563,6 @@ base_js = r"""
     btnImg.setAttribute('aria-pressed', showImages ? 'true' : 'false');
   }
 
-  // トグルは保存形式も更新、IOも安全に切替
   function toggleImages(e){
     if (e) { e.preventDefault(); e.stopPropagation(); }
     showImages = !showImages;
@@ -621,7 +627,7 @@ def write_cards_js(df: pd.DataFrame) -> str:
 
 # ===== HTML（JSONは外部JSを先読み、ロジックはdefer） =====
 def html_page(title: str, js_source: str, logo_uri: str, cards_ver: str) -> str:
-    shop_svg = "<svg viewBox='0 0 24 24' aria-hidden='true' fill='currentColor'><path d='M3 9.5V8l2.2-3.6c.3-.5.6-.7 1-.7h11.6c.4 0 .7.2.9.6L21 8v1.5c0 1-.8 1.8-1.8 1.8-.9 0-1.6-.6-1.8-1.4-.2.8-.9 1.4-1.8 1.4s-1.6-.6-1.8-1.4c-.2.8-.9 1.4-1.8 1.4s-1.6-.6-1.8-1.4c-.2.8-.9 1.4-1.8 1.4s-1.6-.6-1.8-1.4c-.2.8-.9 1.4-1.8 1.4C3.8 11.3 3 10.5 3 9.5zM5 12.5h14V20c0 .6-.4 1-1 1H6c-.6 0-1-.4-1-1v-7.5zm4 1.5v5h6v-5H9zM6.3 5.2 5 7.5h14l-1.3-2.3H6.3z'/></svg>"
+    shop_svg = "<svg viewBox='0 0 24 24' aria-hidden='true' fill='currentColor'><path d='M3 9.5V8l2.2-3.6c.3-.5.6-.7 1-.7h11.6c.4 0 .7.2.9.6L21 8v1.5c0 1-.8 1.8-1.8 1.8-.9 0-1.6-.6-1.8-1.4-.2.8-.9 1.4-1.8 1.4s-1.6-.6-1.8-1.4c-.2.8-.9 1.4-1.8 1.4s-1.6-.6-1.8-1.4c-.2.8-.9 1.4-1.8 1.4s-1.6-.6-1.8-1.4c-.2.8-.9 1.4-1.8 1.4s-1.6-.6-1.8-1.4c-.2.8-.9 1.4-1.8 1.4C3.8 11.3 3 10.5 3 9.5zM5 12.5h14V20c0 .6-.4 1-1 1H6c-.6 0-1-.4-1-1v-7.5zm4 1.5v5h6v-5H9zM6.3 5.2 5 7.5h14l-1.3-2.3H6.3z'/></svg>"
     login_svg= "<svg viewBox='0 0 24 24' aria-hidden='true' fill='currentColor'><path d='M12 12a5 5 0 1 0-5-5 5 5 0 0 0 5 5zm0 2c-4.418 0-8 2.239-8 5v2h16v-2c0-2.761-3.582-5-8-5z'/></svg>"
 
     parts = []
@@ -682,9 +688,11 @@ def write_mode(dir_name: str, initial_sort_js_literal: str, title_text: str, car
     html = html_page(title_text, js, LOGO_URI, cards_ver)
     (sub / "index.html").write_text(html, encoding="utf-8")
 
-write_mode("default", "null", "デュエマ買取表", CARDS_VER)
+# ★ default は初期表示を「価格高い順」に変更
+write_mode("default", "'desc'", "デュエマ買取表", CARDS_VER)
+# 既存モードは従来どおり
 write_mode("price_desc", "'desc'", "デュエマ買取表（price_desc）", CARDS_VER)
-write_mode("price_asc", "'asc'", "デュエマ買取表（price_asc）", CARDS_VER)
+write_mode("price_asc",  "'asc'",  "デュエマ買取表（price_asc）",  CARDS_VER)
 
 # ルートは default/ にリダイレクト
 (OUT_DIR / "index.html").write_text("<meta http-equiv='refresh' content='0; url=default/'>", encoding="utf-8")
