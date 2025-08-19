@@ -50,7 +50,7 @@ COL_IMGURL = 9
 
 # サムネ設定
 THUMB_DIR = OUT_DIR / "assets" / "thumbs"
-THUMB_W = 320  # 一覧用幅
+THUMB_W = 480  # 一覧用幅（← 320 → 480 にアップ、横4列のまま高精細）
 
 # ---- ロゴ探索 ----
 def find_logo_path():
@@ -268,7 +268,11 @@ nav.simple strong{color:#111;user-select:none}
   .brand-left img{ height:56px }
   .center-ttl{ grid-area:title; font-size:clamp(20px, 7vw, 28px); line-height:1.1; text-align:left; white-space:nowrap }
   .actions{ grid-area:actions; justify-content:center }
-  .grid.grid-img{grid-template-columns:repeat(4, minmax(0,1fr)); gap:8px}
+
+  /* ★ スマホ時に実質カード幅を最大化：左右余白と隙間を縮小（4列は維持） */
+  .wrap{ padding:8px } /* ← 12px 16px から縮小して横幅を確保 */
+  .grid.grid-img{grid-template-columns:repeat(4, minmax(0,1fr)); gap:4px} /* ← gap:8px → 4px */
+
   .b{padding:6px}.n{font-size:11px}
   .mx{ font-size:clamp(12px, 4.2vw, 16px); white-space:nowrap }
   nav.simple{gap:8px; flex-wrap:nowrap; justify-content:space-between}
@@ -321,15 +325,13 @@ base_js = r"""
   const eager1 = pick(4, 8, 16);
   const eager2 = pick(8, 16, 32);
 
-  // 初回はモバイル/遅回線なら画像OFF。旧 'true'/'false' を '1'/'0' に正規化
-    // ★初期表示は必ず画像ON
+  // ★初期表示は必ず画像ON
   let showImages;
   let saved = localStorage.getItem('showImages');
   if (saved === 'true')  { localStorage.setItem('showImages','1'); saved = '1'; }
   if (saved === 'false') { localStorage.setItem('showImages','0'); saved = '0'; }
-  if (saved === null) showImages = true;   // ←ここを変更（デフォルトで ON）
+  if (saved === null) showImages = true;
   else showImages = (saved === '1');
-
 
   // クエリ正規化
   const SEP_RE = /[\s\u30FB\u00B7·/／\-_—–−]+/g;
@@ -337,7 +339,6 @@ base_js = r"""
   const kanjiReadingMap = { "伝説":"でんせつ" };
   const latinAliasMap = { "complex": "こんぷれっくす", "c0br4": "こぶら" };
 
-  // かな正規化（既存）
   function normalizeForSearch(s){
     s = (s||'').normalize('NFKC').toLowerCase();
     for(const [k,v] of Object.entries(latinAliasMap)){ s = s.split(k).join(v); }
@@ -346,7 +347,6 @@ base_js = r"""
     return s;
   }
 
-  // ★追加：ラテン文字用の正規化（アルファベット検索を通す）
   function normalizeLatin(s){
     s = (s||'').normalize('NFKC').toLowerCase();
     s = s
@@ -384,15 +384,13 @@ base_js = r"""
   }
   let ALL = Array.isArray(window.__CARDS__) ? window.__CARDS__.map(norm) : [];
 
-  // ★欄ごと一致用の正規化キャッシュ（初期化時に1回だけ）
+  // ★欄ごと一致用の正規化キャッシュ
   ALL = ALL.map(it => ({
     ...it,
-    // かな側
     _name:        normalizeForSearch(it.name || ""),
     _code:        normalizeForSearch(it.code || ""),
     _packbooster: normalizeForSearch([it.pack || "", it.booster || ""].join(" ")),
     _rarity:      normalizeForSearch(it.rarity || ""),
-    // ★ラテン側（アルファベット検索はこちらに当てる）
     _name_lat:        normalizeLatin(it.name || ""),
     _code_lat:        normalizeLatin(it.code || ""),
     _packbooster_lat: normalizeLatin([it.pack || "", it.booster || ""].join(" ")),
@@ -416,10 +414,10 @@ base_js = r"""
   function cardHTML_img(it){
     const nameEsc = escHtml(it.name||'');
     const full = it.image||'';
-    const codeEsc = escHtml(it.code||'');  // ★型番
+    const codeEsc = escHtml(it.code||'');
     let thumb = it.thumb || full;
     if (thumb && !/^https?:\/\//.test(thumb) && !thumb.startsWith('../')) {
-      thumb = '../' + thumb; // docs/<mode>/index.html から見て1階層上
+      thumb = '../' + thumb;
     }
     const codeHtml = codeEsc ? `<span class="code">[${codeEsc}]</span>` : '';
     return `
@@ -469,20 +467,17 @@ base_js = r"""
     document.querySelectorAll('#grid img').forEach((img, i)=>{ img.setAttribute('fetchpriority', i < 8 ? 'high' : 'low'); });
   }
 
-  // 見えてる分は即読み込み（IOの保険）
   function eagerLoad(n){
     const imgs=[...document.querySelectorAll('#grid img[data-src]')].slice(0,n);
     imgs.forEach(img=>{ if(!img.src){ img.src = img.getAttribute('data-src'); img.removeAttribute('data-src'); }});
   }
 
   function apply(){
-    // かな側クエリ
     const qNameK   = normalizeForSearch(nameQ.value||'');
     const qCodeK   = normalizeForSearch(codeQ.value||'');
     const qPackK   = normalizeForSearch(packQ.value||'');
     const qRarityK = normalizeForSearch(rarityQ.value||'');
 
-    // ラテン側クエリ
     const qNameL   = normalizeLatin(nameQ.value||'');
     const qCodeL   = normalizeLatin(codeQ.value||'');
     const qPackL   = normalizeLatin(packQ.value||'');
