@@ -1,12 +1,11 @@
-name: Build & Publish buylist (Self-hosted Runner, paginated)
+name: Build & Publish buylist (self-hosted, paginated)
 
 on:
   workflow_dispatch: {}
   push:
     branches: [ main ]
-  # 定期実行したい場合はコメント解除（UTC）
   # schedule:
-  #   - cron: "*/30 * * * *"
+  #   - cron: "*/30 * * * *"  # 30分毎（UTC）
 
 permissions:
   contents: write
@@ -19,10 +18,6 @@ jobs:
   build:
     runs-on: [self-hosted, local]
 
-    defaults:
-      run:
-        shell: powershell
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -33,12 +28,14 @@ jobs:
           python-version: '3.11'
 
       - name: Install deps
+        shell: pwsh
         run: |
           python -m pip install --upgrade pip
           pip install pandas openpyxl pillow requests
 
-      # ===== POS から全ページ取得（/auth?currentPage=… /api?take&skip 両対応）=====
-      - name: Fetch from POS (paginate all pages)
+      # ===== POS から全ページ取得（/auth?currentPage=… と /api?take&skip の両対応）=====
+      - name: Fetch from POS (paginate)
+        shell: pwsh
         env:
           POS_FILE_URL: ${{ secrets.POS_FILE_URL }}
           POS_COOKIE: ${{ secrets.POS_COOKIE }}
@@ -50,281 +47,144 @@ jobs:
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Force -Path data | Out-Null
 
-          $script = @'
-param(
-  [string]$Url,
-  [string]$Cookie,
-  [string]$AuthHeader,
-  [string]$CsrfHeader,
-  [int]$MaxPages = 50,
-  [int]$DefaultPageSize = 100
-)
-$ErrorActionPreference = 'Stop'
-New-Item -ItemType Directory -Force -Path data | Out-Null
+          function Sanitize([string]$s){
+            if ($null -eq $s) { return '' }
+            ($s -replace "`r|`n",' ') -replace '\^&','&' -replace '\^','' | ForEach-Object { $_.Trim('"').Trim("'").Trim() }
+          }
 
-# ---- sanitize ----
-$u = ($Url ?? '')
-$u = $u -replace '\r|\n',''
-$u = $u.Trim('"').Trim("'").Trim()
-$u = $u -replace '\^&','&' -replace '\^',''
-if ($u -notmatch '^https?://') { throw 'POS_FILE_URL invalid (must start with http/https)' }
+          $Url  = Sanitize $env:POS_FILE_URL
+          if ($Url -notmatch '^https?://') { throw 'POS_FILE_URL must start with http/https' }
+          $Cook = Sanitize $env:POS_COOKIE
+          $Auth = Sanitize $env:POS_AUTH_HEADER
+          $Csrf = Sanitize $env:POS_X_CSRF_HEADER
 
-$c = ($Cookie ?? '') -replace '\r|\n',''
+          Write-Output ("::add-mask::" + $Url)
+          if ($Cook) { Write-Output ("::add-mask::" + $Cook) }
+          if ($Auth) { Write-Output ("::add-mask::" + $Auth) }
+          if ($Csrf) { Write-Output ("::add-mask::" + $Csrf) }
 
-Write-Output ('::add-mask::' + $u)
-if ($c) { Write-Output ('::add-mask::' + $c) }
-if ($AuthHeader) { Write-Output ('::add-mask::' + $AuthHeader) }
-if ($CsrfHeader) { Write-Output ('::add-mask::' + $CsrfHeader) }
+          Add-Type -AssemblyName System.Web
+          function Set-Q([string]$u,[string]$k,[string]$v){
+            $uri=[Uri]$u;$qs=[System.Web.HttpUtility]::ParseQueryString($uri.Query);$qs.Set($k,$v)
+            $b=[UriBuilder]::new($uri);$b.Query=$qs.ToString();$b.Uri.AbsoluteUri
+          }
 
-# ---- helpers ----
-Add-Type -AssemblyName System.Web
+          $qs=[System.Web.HttpUtility]::ParseQueryString(([Uri]$Url).Query)
+          $hasPage = ($qs.AllKeys -contains 'currentPage') -or ($Url -like '*/auth/*')
+          $hasTS   = (($qs['take'] -ne $null) -and ($qs['skip'] -ne $null)) -or ($Url -like '*/api/*')
+          $pageSize = [int]($qs['itemsPerPage'] ?? $qs['take'] ?? $env:POS_PAGE_SIZE ?? 100); if ($pageSize -lt 1) { $pageSize = 100 }
+          $start    = [int]($qs['currentPage'] ?? 0)
+          $maxPages = [int]($env:POS_MAX_PAGES ?? 50)
 
-function Set-QueryParam([string]$url, [string]$key, [string]$val){
-  $uri = [Uri]$url
-  $qs  = [System.Web.HttpUtility]::ParseQueryString($uri.Query)
-  $qs.Set($key, $val)
-  $b = [UriBuilder]::new($uri)
-  $b.Query = $qs.ToString()
-  return $b.Uri.AbsoluteUri
-}
+          $headers = @{
+            'User-Agent'      = 'Mozilla/5.0'
+            'Accept'          = '*/*'
+            'Accept-Language' = 'ja,en-US;q=0.9,en;q=0.8'
+            'Content-Type'    = 'application/json'
+            'Referer'         = 'https://pos.mycalinks.com/'
+            'Origin'          = 'https://pos.mycalinks.com'
+          }
+          if ($Cook) { $headers['Cookie'] = $Cook }
+          if ($Auth) { $kv=$Auth.Split(':',2); if ($kv.Count -eq 2) { $headers[$kv[0].Trim()] = $kv[1].Trim() } }
+          if ($Csrf) { $kv=$Csrf.Split(':',2); if ($kv.Count -eq 2) { $headers[$kv[0].Trim()] = $kv[1].Trim() } }
 
-function Get-Query([string]$url){
-  $uri = [Uri]$url
-  return [System.Web.HttpUtility]::ParseQueryString($uri.Query)
-}
+          $all = @()
+          $prevHash = ''
 
-function Add-KVHeader($headers, $line){
-  if ([string]::IsNullOrWhiteSpace($line)) { return }
-  $ix = $line.IndexOf(':')
-  if ($ix -gt 0) {
-    $k = $line.Substring(0,$ix).Trim()
-    $v = $line.Substring($ix+1).Trim()
-    if ($k -and $v) { $headers[$k] = $v }
-  }
-}
+          for ($i=$start; $i -lt $start + $maxPages; $i++) {
+            if ($hasPage) {
+              $u = Set-Q $Url 'currentPage' "$i"; $u = Set-Q $u 'itemsPerPage' "$pageSize"
+            } elseif ($hasTS) {
+              $u = Set-Q $Url 'take' "$pageSize"; $u = Set-Q $u 'skip' "$($i * $pageSize)"
+            } else {
+              $u = $Url; if ($i -gt $start) { break }
+            }
 
-function New-BaseHeaders([string]$cookie){
-  $h = New-Object 'System.Collections.Generic.Dictionary[String,String]'
-  $h['User-Agent']      = 'Mozilla/5.0'
-  $h['Accept']          = '*/*'
-  $h['Accept-Language'] = 'ja,en-US;q=0.9,en;q=0.8'
-  $h['Content-Type']    = 'application/json'
-  $h['Referer']         = 'https://pos.mycalinks.com/'
-  $h['Origin']          = 'https://pos.mycalinks.com'
-  if ($cookie) { $h['Cookie'] = $cookie }
-  return $h
-}
+            $out = "data/raw_$i.bin"
+            try {
+              $resp = Invoke-WebRequest -Uri $u -Headers $headers -Method GET -MaximumRedirection 5 -OutFile $out -PassThru -ErrorAction Stop
+              $code = [int]$resp.StatusCode
+              $ct   = $resp.Headers['Content-Type']
+            } catch {
+              if ($_.Exception.Response) { $code=[int]$_.Exception.Response.StatusCode; $ct=$_.Exception.Response.ContentType } else { throw }
+            }
+            Write-Host "GET $u -> $code $ct"
+            if ($code -ne 200) { break }
 
-function Fetch-Raw($url, $headers, $outPath){
-  $code = 0; $ct=''
-  try{
-    $resp = Invoke-WebRequest -Uri $url -Headers $headers -Method GET -MaximumRedirection 5 -OutFile $outPath -ErrorAction Stop
-    $code = ($resp.StatusCode) ? [int]$resp.StatusCode : 200
-    $ct = $resp.Headers['Content-Type']
-  } catch {
-    if ($_.Exception.Response) {
-      $code = [int]$_.Exception.Response.StatusCode
-      $ct = $_.Exception.Response.ContentType
-    } else { throw }
-  }
-  if (-not $ct) { $ct = '' }
-  return @{ Code=$code; ContentType=$ct }
-}
+            $hash=(Get-FileHash -Algorithm MD5 $out).Hash
+            if ($prevHash -and $prevHash -eq $hash) { break }
+            $prevHash=$hash
 
-function Try-ReadJsonFile($path){
-  if (-not (Test-Path $path)) { return $null }
-  $bytes = [System.IO.File]::ReadAllBytes($path)
-  if ($bytes.Length -eq 0) { return $null }
-  $c0 = $bytes[0]
-  if ($c0 -ne 123 -and $c0 -ne 91) { return $null } # '{' or '['
-  try { return Get-Content $path -Raw | ConvertFrom-Json -ErrorAction Stop } catch { return $null }
-}
+            $json=$null
+            if ("$ct" -match 'application/json') {
+              try { $json = Get-Content $out -Raw | ConvertFrom-Json -ErrorAction Stop } catch {}
+            } else {
+              $html = Get-Content $out -Raw
+              $m = [Regex]::Match($html,'<script[^>]*id="__NEXT_DATA__"[^>]*>(.*?)</script>',[System.Text.RegularExpressions.RegexOptions]::Singleline)
+              if ($m.Success) { try { $json = $m.Groups[1].Value | ConvertFrom-Json -ErrorAction Stop } catch {} }
+            }
 
-function Try-ExtractNextData($html){
-  $rx = [System.Text.RegularExpressions.Regex]::new('<script[^>]*id="__NEXT_DATA__"[^>]*>(.*?)</script>', [System.Text.RegularExpressions.RegexOptions]::Singleline)
-  $m = $rx.Match($html)
-  if ($m.Success) {
-    $json = $m.Groups[1].Value
-    try { return $json | ConvertFrom-Json -ErrorAction Stop } catch { return $null }
-  }
-  return $null
-}
+            $items=@()
+            if ($json) {
+              foreach($k in 'items','data','products','result','value') {
+                if ($json.PSObject.Properties.Name -contains $k) {
+                  $v=$json.$k
+                  if ($v -is [System.Collections.IEnumerable]) { $items=@($v); break }
+                }
+              }
+              if (-not $items -and ($json -is [System.Collections.IEnumerable])) { $items=@($json) }
+            }
 
-function Find-FirstArrayOfObjects($obj){
-  if ($null -eq $obj) { return $null }
-  if ($obj -is [System.Collections.IEnumerable] -and -not ($obj -is [string])) {
-    $arr = @()
-    foreach($x in $obj){ $arr += ,$x }
-    if ($arr.Count -gt 0 -and $arr[0] -is [psobject]) { return $arr }
-    foreach($x in $arr){
-      $y = Find-FirstArrayOfObjects $x
-      if ($y) { return $y }
-    }
-    return $null
-  }
-  if ($obj -is [psobject]) {
-    foreach($p in $obj.PSObject.Properties){
-      $y = Find-FirstArrayOfObjects $p.Value
-      if ($y) { return $y }
-    }
-  }
-  return $null
-}
+            if (-not $items -or $items.Count -eq 0) {
+              if ($i -gt $start) { break } else { continue }
+            }
 
-function Extract-Items($obj){
-  if ($null -eq $obj) { return @() }
-  foreach($k in 'items','data','products','result','value'){
-    if ($obj.PSObject.Properties.Name -contains $k) {
-      $v = $obj.$k
-      if ($v -is [System.Collections.IEnumerable]) {
-        $arr = @(); foreach($x in $v){ $arr += ,$x }
-        if ($arr.Count -gt 0) { return $arr }
-      }
-    }
-  }
-  $maybe = Find-FirstArrayOfObjects $obj
-  if ($maybe) {
-    $arr = @(); foreach($x in $maybe){ $arr += ,$x }
-    return $arr
-  }
-  return @()
-}
+            $all += $items
+            if ($items.Count -lt $pageSize) { break }
+          }
 
-# ---- decide paging mode ----
-$qs = Get-Query $u
-$hasPage = $qs.AllKeys -contains 'currentPage'
-$hasTakeSkip = ($qs.AllKeys -contains 'take') -and ($qs.AllKeys -contains 'skip')
+          $all | ConvertTo-Json -Depth 100 | Set-Content -Encoding UTF8 data/items.json
+          Write-Host "Total items: $($all.Count)"
 
-$pageSize = $DefaultPageSize
-if ($qs['itemsPerPage']) { [void][int]::TryParse($qs['itemsPerPage'], [ref]$pageSize) }
-if ($qs['take'])        { [void][int]::TryParse($qs['take'], [ref]$pageSize) }
-
-$startPage = 0
-if ($hasPage) {
-  if ($qs['currentPage']) { [void][int]::TryParse($qs['currentPage'], [ref]$startPage) }
-}
-
-$headers = New-BaseHeaders $c
-Add-KVHeader $headers $AuthHeader
-Add-KVHeader $headers $CsrfHeader
-
-$all = New-Object System.Collections.Generic.List[object]
-$prevHash = $null
-$pagesFetched = 0
-
-for($i=$startPage; $i -lt ($startPage + $MaxPages); $i++){
-  if ($hasPage -or ($u -like '*/auth/*')) {
-    $pageUrl = Set-QueryParam $u 'currentPage' ([string]$i)
-    if ($pageSize -gt 0) { $pageUrl = Set-QueryParam $pageUrl 'itemsPerPage' ([string]$pageSize) }
-  } elseif ($hasTakeSkip -or ($u -like '*/api/*')) {
-    $pageUrl = $u
-    if ($pageSize -gt 0) { $pageUrl = Set-QueryParam $pageUrl 'take' ([string]$pageSize) }
-    $pageUrl = Set-QueryParam $pageUrl 'skip' ([string]($i * [math]::Max(1,$pageSize)))
-  } else {
-    $pageUrl = $u
-    if ($i -gt $startPage) { break }
-  }
-
-  $out = "data/raw_p_$i.bin"
-  $res = Fetch-Raw $pageUrl $headers $out
-  Write-Host ("GET " + $pageUrl + " -> " + $res.Code + " " + $res.ContentType)
-  if ($res.Code -ne 200) { break }
-
-  $json = $null
-  if ($res.ContentType -match 'application/json') {
-    $json = Try-ReadJsonFile $out
-  } elseif ($res.ContentType -match 'text/html') {
-    $html = Get-Content $out -Raw
-    $nd = Try-ExtractNextData $html
-    if ($nd) { $json = $nd }
-  } else {
-    $json = Try-ReadJsonFile $out
-  }
-
-  $items = @()
-  if ($json) {
-    $items = Extract-Items $json
-  }
-
-  $h = (Get-FileHash -Algorithm MD5 $out).Hash
-  if ($prevHash -and $prevHash -eq $h) { break }
-  $prevHash = $h
-
-  if ($items.Count -eq 0) {
-    if ($i -gt $startPage) { break } else { continue }
-  }
-
-  foreach($it in $items){ $all.Add($it) }
-  $pagesFetched++
-
-  if ($items.Count -lt [math]::Max(1,$pageSize)) { break }
-}
-
-Write-Host ("pages fetched: " + $pagesFetched + ", items: " + $all.Count)
-
-$js = $all | ConvertTo-Json -Depth 100
-Set-Content -Encoding UTF8 -LiteralPath 'data/items.json' -Value $js
-'@
-
-          Set-Content -Encoding ASCII -LiteralPath .\fetch_paginated.ps1 -Value $script
-          Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
-          & .\fetch_paginated.ps1 `
-            -Url $env:POS_FILE_URL `
-            -Cookie $env:POS_COOKIE `
-            -AuthHeader $env:POS_AUTH_HEADER `
-            -CsrfHeader $env:POS_X_CSRF_HEADER `
-            -MaxPages ([int]$env:POS_MAX_PAGES) `
-            -DefaultPageSize ([int]$env:POS_PAGE_SIZE)
-
-          Write-Host "== data/ =="
-          if (Test-Path data) { Get-ChildItem -Force data | Select-Object Name,Length,LastWriteTime | Format-Table | Out-String | Write-Host }
-
-      # ===== JSON → CSV（items.json がある時だけ）=====
-      - name: Convert JSON to CSV (generic)
+      - name: Convert JSON to CSV
         if: ${{ hashFiles('data/items.json') != '' }}
+        shell: pwsh
         run: |
           $py = @'
           import json, pandas as pd
           from pandas import json_normalize
-          import pathlib
-          p = pathlib.Path("data/items.json")
-          data = json.load(p.open(encoding="utf-8"))
+          with open("data/items.json","r",encoding="utf-8") as f:
+              data = json.load(f)
           if isinstance(data, dict):
-              for key in ("items","data","products","result","value"):
-                  if key in data and isinstance(data[key], list):
-                      data = data[key]; break
+              for k in ("items","data","products","result","value"):
+                  if k in data and isinstance(data[k], list):
+                      data = data[k]; break
           if not isinstance(data, list):
               data = [data]
           df = json_normalize(data, sep=".")
           df.to_csv("data/buylist.csv", index=False, encoding="utf-8")
-          print("Wrote data/buylist.csv rows=%d cols=%d" % (len(df), len(df.columns)))
+          print("rows:", len(df), "cols:", len(df.columns))
           '@
           Set-Content -Encoding UTF8 -LiteralPath .\convert_json_to_csv.py -Value $py
           python .\convert_json_to_csv.py
           Get-ChildItem data
 
-      # ===== 静的ページ生成（gen_buylist.py 使用）=====
       - name: Build static pages
+        shell: pwsh
         env:
           OUT_DIR: docs
           PER_PAGE: "80"
           BUILD_THUMBS: "0"
         run: |
-          Write-Host "== Repo root =="
-          Get-ChildItem -Force | Select-Object Name,Length,LastWriteTime | Format-Table | Out-String | Write-Host
-          Write-Host "== data/ =="
-          if (Test-Path data) { Get-ChildItem -Force data | Select-Object Name,Length,LastWriteTime | Format-Table | Out-String | Write-Host }
-
           $candidates = @("data\buylist.xlsx","data\buylist.csv","buylist.xlsx","buylist.csv")
           $input = $null
           foreach ($p in $candidates) { if (Test-Path $p) { $input = $p; break } }
-
           if (-not $input) { throw "No input data found (POS fetch failed and none in repo)." }
-
           Write-Host ("Using input: " + $input)
           python gen_buylist.py $input
 
       - name: Commit & push docs
+        shell: pwsh
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
