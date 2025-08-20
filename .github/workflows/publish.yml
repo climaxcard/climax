@@ -16,7 +16,12 @@ concurrency:
 
 jobs:
   build:
-    runs-on: [self-hosted, local]
+    # 自前ランナーに付いているラベル。必要なら local をあなたのラベルに合わせて変更
+    runs-on: [self-hosted, Windows, local]
+
+    defaults:
+      run:
+        shell: powershell
 
     steps:
       - name: Checkout
@@ -28,21 +33,18 @@ jobs:
           python-version: '3.11'
 
       - name: Install deps
-        shell: pwsh
         run: |
           python -m pip install --upgrade pip
           pip install pandas openpyxl pillow requests
 
-      # ===== POS から全ページ取得（/auth?currentPage=… と /api?take&skip の両対応）=====
       - name: Fetch from POS (paginate)
-        shell: pwsh
         env:
-          POS_FILE_URL: ${{ secrets.POS_FILE_URL }}
-          POS_COOKIE: ${{ secrets.POS_COOKIE }}
-          POS_AUTH_HEADER: ${{ secrets.POS_AUTH_HEADER }}
-          POS_X_CSRF_HEADER: ${{ secrets.POS_X_CSRF_HEADER }}
-          POS_MAX_PAGES: 50
-          POS_PAGE_SIZE: 100
+          POS_FILE_URL:       ${{ secrets.POS_FILE_URL }}
+          POS_COOKIE:         ${{ secrets.POS_COOKIE }}
+          POS_AUTH_HEADER:    ${{ secrets.POS_AUTH_HEADER }}
+          POS_X_CSRF_HEADER:  ${{ secrets.POS_X_CSRF_HEADER }}
+          POS_MAX_PAGES:      50
+          POS_PAGE_SIZE:      100
         run: |
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Force -Path data | Out-Null
@@ -148,7 +150,6 @@ jobs:
 
       - name: Convert JSON to CSV
         if: ${{ hashFiles('data/items.json') != '' }}
-        shell: pwsh
         run: |
           $py = @'
           import json, pandas as pd
@@ -170,7 +171,6 @@ jobs:
           Get-ChildItem data
 
       - name: Build static pages
-        shell: pwsh
         env:
           OUT_DIR: docs
           PER_PAGE: "80"
@@ -184,7 +184,6 @@ jobs:
           python gen_buylist.py $input
 
       - name: Commit & push docs
-        shell: pwsh
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
