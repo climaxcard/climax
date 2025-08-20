@@ -1,14 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-デュエマ買取表 静的ページ生成（完成版・中央タイトル）
-- ヘッダー 1段目：左=ロゴ / 中央=大きい「デュエマ買取表」 / 右=スペーサ
-- ヘッダー 2段目：中央に Shop / Login
-- CSV/Excel 自動対応（2行見出し→英語キー→データの二重ヘッダも正規化）
+デュエマ買取表 静的ページ生成（完成版・中央タイトル＋ロゴ assets/logo.png 対応）
+- CSV/Excel 自動対応。二重ヘッダ(日本語/英語キー)も自動正規化
 - 列は「ヘッダ名優先 → 位置フォールバック(C/E/F/G/H/O/Q)」
-- 画像URLは Q列（allow_auto_print_label など）最優先、IMAGE() 形式も抽出
-- 画像ON時は「カード名(C)＋型番(F)＋買取価格(O)のみ」表示
-- スマホで型番がめり込まない（バッジ化＋nowrap）
-- データはHTMLにインライン埋め込み（外部JS不要）
+- 画像URLは Q列系（allow_auto_print_label 等）最優先。=IMAGE() 抽出にも対応
+- 画像ON時は「カード名＋型番＋買取価格のみ」表示（スマホ最適化：型番はバッジ・nowrap）
+- ロゴは LOGO_FILE 環境変数 or assets/logo.png を最優先で埋め込み（base64）
+- 見出しは 2段ヘッダー（1段目：ロゴ・中央大タイトル、2段目：Shop/Login）。高さはJSで測って被り防止
 """
 
 from pathlib import Path
@@ -31,12 +29,19 @@ DEFAULT_EXCEL = "buylist.xlsx"
 ALT_EXCEL     = "data/buylist.xlsx"
 FALLBACK_WINDOWS = r"C:\Users\user\Desktop\デュエマ買取表\buylist.xlsx"
 
-EXCEL_PATH = os.getenv("EXCEL_PATH", DEFAULT_EXCEL)  # CSVでもOK（自動検出）
+# 入力は CSV/Excel 自動検出
+EXCEL_PATH = os.getenv("EXCEL_PATH", DEFAULT_EXCEL)
 SHEET_NAME = os.getenv("SHEET_NAME", "シート1")
+
+# 出力
 OUT_DIR    = Path(os.getenv("OUT_DIR", "docs"))
 PER_PAGE   = int(os.getenv("PER_PAGE", "80"))
-BUILD_THUMBS = os.getenv("BUILD_THUMBS", "1") == "1"
+BUILD_THUMBS = os.getenv("BUILD_THUMBS", "0") == "1"
 
+# ロゴ（任意）
+LOGO_FILE_ENV = os.getenv("LOGO_FILE", "").strip()
+
+# argvでファイルパス上書き
 if len(sys.argv) > 1 and sys.argv[1]:
     EXCEL_PATH = sys.argv[1]
 
@@ -54,60 +59,44 @@ IDX_IMGURL = 16
 THUMB_DIR = OUT_DIR / "assets" / "thumbs"
 THUMB_W = 600
 
-# ---- ロゴ探索（任意） ----
+# ---- ロゴ探索（assets/logo.png 最優先。次いで LOGO_FILE 環境変数 → カレント → スクリプト隣） ----
 def find_logo_path():
-    """
-    ロゴ探索を強化：
-    - LOGO_FILE / LOGO_PATH 環境変数があれば最優先
-    - よくある配置（assets/, static/, docs/）や .webp も拾う
-    """
-    try:
-        if LOGO_FILE:
-            p = Path(LOGO_FILE)
-            if p.exists() and p.is_file():
-                return p
-    except Exception:
-        pass
-
-    cands = [
-        Path.cwd() / "logo.png",
-        Path.cwd() / "logo.webp",
-        Path.cwd() / "logo.png.png",
-        Path("assets/logo.png"),
-        Path("assets/logo.webp"),
-        Path("static/logo.png"),
-        Path("static/logo.webp"),
-        Path("docs/logo.png"),
-        Path("docs/assets/logo.png"),
-    ]
+    cands = []
+    # 明示指定（環境変数）を先に
+    if LOGO_FILE_ENV:
+        cands.append(Path(LOGO_FILE_ENV))
+    # 最優先：assets/logo.png（作業ルート基準）
+    cands += [Path("assets") / "logo.png"]
+    # カレント直下
+    cands += [Path(os.getcwd()) / "logo.png", Path(os.getcwd()) / "logo.png.png"]
+    # スクリプト隣接
     try:
         here = Path(__file__).parent
-        cands += [
-            here / "logo.png",
-            here / "logo.webp",
-            here / "logo.png.png",
-        ]
+        cands += [here / "assets" / "logo.png", here / "logo.png", here / "logo.png.png"]
     except NameError:
         pass
-
     for p in cands:
         try:
-            if p.exists() and p.is_file():
+            if p and p.exists() and p.is_file():
                 return p
         except Exception:
             pass
     return None
 
-def logo_to_data_uri(p):
+def logo_to_data_uri(p: Path|None) -> str:
     if not p: return ""
     mime = mimetypes.guess_type(str(p))[0] or "image/png"
-    b64  = base64.b64encode(p.read_bytes()).decode("ascii")
-    return f"data:{mime};base64,{b64}"
+    try:
+        b64  = base64.b64encode(p.read_bytes()).decode("ascii")
+        return f"data:{mime};base64,{b64}"
+    except Exception:
+        return ""
 
 LOGO_URI = logo_to_data_uri(find_logo_path())
 
 # ========= 入力ファイル 読み込み・正規化（CSV/Excel自動対応） =========
 def _read_csv_auto(path: Path) -> pd.DataFrame:
+    # 文字化け対策：よくある順に試す
     for enc in ("utf-8-sig", "cp932", "utf-8"):
         try:
             return pd.read_csv(path, encoding=enc)
@@ -123,14 +112,15 @@ def _normalize_two_header_layout(df: pd.DataFrame) -> pd.DataFrame:
     """
     try:
         cand = []
-        for i in range(min(12, len(df))):
+        m = min(12, len(df))
+        for i in range(m):
             row = df.iloc[i].astype(str).tolist()
             if "display_name" in row and "cardnumber" in row:
                 cand.append(i)
         if not cand:
             return df
         hdr = cand[0]
-        start = hdr + 2  # 多くの書式で2行下からデータ
+        start = hdr + 2  # 多くの形式で2行下がデータ
         df2 = df.iloc[start:].copy()
         df2.columns = df.iloc[hdr].tolist()
         return df2.reset_index(drop=True)
@@ -142,8 +132,11 @@ def _resolve_input(pref: str|None) -> Path:
     if pref: cands.append(Path(pref))
     cands += [Path("buylist.csv"), Path("buylist.xlsx"), Path(ALT_EXCEL), Path(FALLBACK_WINDOWS)]
     for p in cands:
-        if p.exists() and p.is_file():
-            return p
+        try:
+            if p.exists() and p.is_file():
+                return p
+        except Exception:
+            pass
     files = sorted(
         [Path(p) for p in glob.glob("*.csv")] + [Path(p) for p in glob.glob("*.xlsx")],
         key=lambda x: x.stat().st_mtime, reverse=True
@@ -156,7 +149,7 @@ def load_buylist_any(path_hint: str, sheet_name: str|None) -> pd.DataFrame:
     if p.suffix.lower()==".csv":
         df0 = _read_csv_auto(p)
         return _normalize_two_header_layout(df0)
-    # Excel
+    # Excel（openpyxl）
     try:
         if sheet_name:
             df0 = pd.read_excel(p, sheet_name=sheet_name, header=None, engine="openpyxl")
@@ -187,7 +180,7 @@ def to_int_series(s: pd.Series) -> pd.Series:
 
 def detail_to_img(val: str) -> str:
     """
-    URL抽出の鉄板:
+    URL抽出:
       - https://… そのまま
       - =IMAGE("…") / IMAGE('…') / @IMAGE("…") / 全角＠IMAGE("…")
       - ="https://…" / 'https://…'
@@ -268,8 +261,10 @@ df = pd.DataFrame({
     "price":   to_int_series(S_PRICE) if len(S_PRICE) else pd.Series([None]*len(df_raw)),
     "image":   clean_text(S_IMGURL).map(detail_to_img),
 })
+# ゴミ行除去
 df = df[~df["name"].str.match(r"^Unnamed", na=False)]
 df = df[df["name"].str.strip()!=""].reset_index(drop=True)
+# 検索用文字列
 df["s"] = df.apply(searchable_row_py, axis=1)
 
 # サムネ列
@@ -286,7 +281,7 @@ def ensure_thumb(url: str) -> str|None:
     if not (requests and Image):
         return None
     try:
-        r = requests.get(url, timeout=10, headers={"User-Agent":"Mozilla/5.0"})
+        r = requests.get(url, timeout=12, headers={"User-Agent":"Mozilla/5.0"})
         r.raise_for_status()
         im = Image.open(io.BytesIO(r.content)).convert("RGB")
         w, h = im.size
@@ -333,13 +328,12 @@ def build_payload(df: pd.DataFrame) -> tuple[str,str]:
 
 CARDS_VER, CARDS_JSON = build_payload(df)
 
-# ========= 見た目（CSS） =========
-# ヘッダー：1段目=「logo title spacer」(titleは中央) / 2段目=actionsを中央
+# ========= 見た目（CSS：2段ヘッダーで被り防止） =========
 base_css = """
 *{box-sizing:border-box}
 :root{
   --bg:#ffffff; --panel:#ffffff; --border:#e5e7eb; --accent:#e11d48;
-  --text:#111111; --muted:#6b7280; --header-h: 128px;
+  --text:#111111; --muted:#6b7280; --header-h: 136px;
 }
 body{ margin:0;color:var(--text);background:var(--bg);font-family:Inter,system-ui,'Noto Sans JP',sans-serif; padding-top: var(--header-h); }
 header{
@@ -418,7 +412,7 @@ nav.simple strong{color:#111;user-select:none}
 .viewer button.close{position:absolute;top:-12px;right:-12px;background:#fff;border:1px solid var(--border);color:#111;border-radius:999px;width:38px;height:38px;cursor:pointer}
 
 @media (max-width:700px){
-  :root{ --header-h: 136px; }
+  :root{ --header-h: 144px; }
   .brand-left img{height:56px}
   .center-ttl{ font-size:clamp(24px, 7vw, 36px) }
   .wrap{ padding:4px }
@@ -434,12 +428,12 @@ nav.simple strong{color:#111;user-select:none}
 small.note{color:var(--muted)}
 """
 
-# ========= JS（画像ON時は「名前＋型番＋価格のみ」） =========
+# ========= JS（ヘッダー高さを測って被り防止；画像ON時は「名前＋型番＋価格のみ」） =========
 base_js = r"""
 (function(){
   const header = document.querySelector('header');
   const setHeaderH = () => {
-    const h = header?.offsetHeight || 128;
+    const h = header?.offsetHeight || 144;
     document.documentElement.style.setProperty('--header-h', h + 'px');
   };
   setHeaderH();
@@ -553,7 +547,6 @@ base_js = r"""
     });
   }
 
-  // 画像ON時は「カード名＋型番＋価格のみ」
   function cardHTML_img(it){
     const nameEsc = escHtml(it.name||'');
     const full = it.image||'';
@@ -794,5 +787,7 @@ write_mode("price_asc",  "'asc'",  "デュエマ買取表（price_asc）")
 # ルートは default/ にリダイレクト
 (OUT_DIR / "index.html").write_text("<meta http-equiv='refresh' content='0; url=default/'>", encoding="utf-8")
 
+print(f"[*] Excel/CSV: {EXCEL_PATH!r}")
+print(f"[*] PER_PAGE={PER_PAGE}  BUILD_THUMBS={'1' if BUILD_THUMBS else '0'}")
 print(f"[LOGO] {'embedded' if LOGO_URI else 'not found (fallback text used)'}")
 print(f"[OK] 生成完了 → {OUT_DIR.resolve()} / 総件数{len(df)}")
