@@ -16,16 +16,45 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
+      # --- 共通 ---
       - name: Checkout
         uses: actions/checkout@v4
 
+      # --- Node: Playwright でPOS→GASへ送信 ---
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install deps (Node)
+        run: npm ci || npm i
+
+      - name: Run fetcher
+        run: npm run fetch
+        env:
+          POS_EMAIL: ${{ secrets.POS_EMAIL }}
+          POS_PASSWORD: ${{ secrets.POS_PASSWORD }}
+          GAS_WEBHOOK_URL: ${{ secrets.GAS_WEBHOOK_URL }}
+          GAS_SHARED_SECRET: ${{ secrets.GAS_SHARED_SECRET }}
+
+      # （任意）失敗時の証跡を回収
+      - name: Upload debug artifacts (always)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-debug
+          path: |
+            debug/*
+            *.log
+          if-no-files-found: ignore
+
+      # --- Python: 静的ページ生成 ---
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          # cache は使わない → 例の「requirements が無い」警告を消す
 
-      - name: Install deps
+      - name: Install deps (Python)
         run: |
           python -m pip install --upgrade pip
           pip install pandas openpyxl pillow requests
@@ -50,8 +79,7 @@ jobs:
           OUT_DIR: docs
           PER_PAGE: "80"
           BUILD_THUMBS: "0"
-        run: |
-          python gen_buylist.py "$INPUT"
+        run: python gen_buylist.py "$INPUT"
 
       - name: Commit & push docs
         run: |
@@ -64,35 +92,3 @@ jobs:
             git commit -m "update buylist (auto)"
             git push
           fi
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: 20
-
-      - name: Install deps (Node)
-        run: npm ci
-
-      - name: Run fetcher
-        run: npm run fetch
-        env:
-          POS_EMAIL: ${{ secrets.POS_EMAIL }}
-          POS_PASSWORD: ${{ secrets.POS_PASSWORD }}
-          GAS_WEBHOOK_URL: ${{ secrets.GAS_WEBHOOK_URL }}
-          GAS_SHARED_SECRET: ${{ secrets.GAS_SHARED_SECRET }}
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.x'
-
-      - name: Install deps (Python)
-        run: pip install -r requirements.txt
-
-      - name: Build static pages
-        run: python gen_buylist.py
