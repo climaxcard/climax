@@ -1,0 +1,11 @@
+{
+  "name": "pos-fetcher",
+  "private": true,
+  "scripts": {
+    "fetch": "node fetch-pos.js",
+    "postinstall": "npx playwright install --with-deps chromium"
+  },
+  "dependencies": {
+    "playwright": "^1.47.0"
+  }
+}
