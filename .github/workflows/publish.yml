@@ -4,9 +4,9 @@ on:
   workflow_dispatch: {}
   push:
     branches: [ main ]
-  # 定期実行したければ有効化（UTC）
+  # 定期実行したい場合はコメント解除（UTC）
   # schedule:
-  #   - cron: "*/30 * * * *"   # every 30 minutes
+  #   - cron: "*/30 * * * *"
 
 permissions:
   contents: write
@@ -37,15 +37,15 @@ jobs:
           python -m pip install --upgrade pip
           pip install pandas openpyxl pillow requests
 
-      # ===== POS から全ページ取得（/auth?currentPage=… /api?take&skip の両対応）=====
+      # ===== POS から全ページ取得（/auth?currentPage=… /api?take&skip 両対応）=====
       - name: Fetch from POS (paginate all pages)
         env:
-          POS_FILE_URL:       ${{ secrets.POS_FILE_URL }}   # 1ページ目のURL（/auth… でも /api… でもOK）
-          POS_COOKIE:         ${{ secrets.POS_COOKIE }}     # 必要に応じて
-          POS_AUTH_HEADER:    ${{ secrets.POS_AUTH_HEADER }}    # 例: Authorization: Bearer xxx
-          POS_X_CSRF_HEADER:  ${{ secrets.POS_X_CSRF_HEADER }}  # 例: x-csrf-token: yyy
-          POS_MAX_PAGES:      50
-          POS_PAGE_SIZE:      100
+          POS_FILE_URL: ${{ secrets.POS_FILE_URL }}
+          POS_COOKIE: ${{ secrets.POS_COOKIE }}
+          POS_AUTH_HEADER: ${{ secrets.POS_AUTH_HEADER }}
+          POS_X_CSRF_HEADER: ${{ secrets.POS_X_CSRF_HEADER }}
+          POS_MAX_PAGES: 50
+          POS_PAGE_SIZE: 100
         run: |
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Force -Path data | Out-Null
