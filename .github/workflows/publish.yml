@@ -34,7 +34,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install pandas openpyxl pillow requests
 
-      # ===== POS から取得（PowerShell 5.1 / 文字列最小） =====
+      # ===== POS fetch (PowerShell 5.1 safe / ASCII only) =====
       - name: Fetch from POS (simple + sanitize + debug)
         env:
           POS_FILE_URL:       ${{ secrets.POS_FILE_URL }}
@@ -57,13 +57,13 @@ jobs:
           if (-not $cookie) { $cookie = '' }
           $cookie = $cookie -replace '\r|\n',''
 
-          # Mask secrets
+          # Mask
           Write-Output ('::add-mask::' + $url)
           if ($cookie) { Write-Output ('::add-mask::' + $cookie) }
           if ($env:POS_AUTH_HEADER)   { Write-Output ('::add-mask::' + $env:POS_AUTH_HEADER) }
           if ($env:POS_X_CSRF_HEADER) { Write-Output ('::add-mask::' + $env:POS_X_CSRF_HEADER) }
 
-          # Headers（最小構成）
+          # Headers
           $headers = New-Object 'System.Collections.Generic.Dictionary[String,String]'
           $headers['User-Agent']      = 'Mozilla/5.0'
           $headers['Accept']          = '*/*'
@@ -107,7 +107,7 @@ jobs:
           Write-Host ('HTTP ' + $code)
           if ($code -ne 200) { throw ('HTTP ' + $code + ' (check headers.txt / error_body.bin)') }
 
-          # Save as .xlsx / .csv / .json by Content-Type or sniff
+          # Decide save path by Content-Type or sniff
           $ctype = ''
           if (Test-Path "data\headers.txt") {
             $line = Get-Content "data\headers.txt" | Select-Object -Last 1
@@ -127,7 +127,7 @@ jobs:
 
           Get-ChildItem data
 
-      # ===== JSON → CSV（必要時のみ） =====
+      # ===== JSON -> CSV (only when items.json exists) =====
       - name: Convert JSON to CSV (generic)
         if: ${{ hashFiles('data/items.json') != '' }}
         run: |
@@ -151,19 +151,28 @@ jobs:
           python .\convert_json_to_csv.py
           Get-ChildItem data
 
-      # ===== 静的ページ生成（あなたの gen_buylist.py を使用） =====
+      # ===== Build static pages =====
       - name: Build static pages
         env:
           OUT_DIR: docs
           PER_PAGE: "80"
           BUILD_THUMBS: "0"
         run: |
+          Write-Host "== Repo root =="
+          Get-ChildItem -Force | Select-Object Name,Length,LastWriteTime | Format-Table | Out-String | Write-Host
+          Write-Host "== data/ =="
+          if (Test-Path data) { Get-ChildItem -Force data | Select-Object Name,Length,LastWriteTime | Format-Table | Out-String | Write-Host }
+
           $candidates = @("data\buylist.xlsx","data\buylist.csv","buylist.xlsx","buylist.csv")
           $input = $null
           foreach ($p in $candidates) { if (Test-Path $p) { $input = $p; break } }
-          if (-not $input) { throw "入力データがありません（POS取得失敗 & リポジトリにも無い）" }
+
+          if (-not $input) { throw "No input data found (POS fetch failed and none in repo)." }
+
+          Write-Host ("Using input: " + $input)
           python gen_buylist.py $input
 
+      # ===== Publish docs/ =====
       - name: Commit & push docs
         run: |
           git config user.name  "github-actions[bot]"
@@ -176,6 +185,7 @@ jobs:
             git push
           }
 
+      # ===== Debug artifacts =====
       - name: Upload debug artifacts
         if: always()
         uses: actions/upload-artifact@v4
