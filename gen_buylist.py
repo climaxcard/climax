@@ -56,15 +56,46 @@ THUMB_W = 600
 
 # ---- ロゴ探索（任意） ----
 def find_logo_path():
-    cands = [Path(os.getcwd()) / "logo.png", Path(os.getcwd()) / "logo.png.png"]
+    """
+    ロゴ探索を強化：
+    - LOGO_FILE / LOGO_PATH 環境変数があれば最優先
+    - よくある配置（assets/, static/, docs/）や .webp も拾う
+    """
+    try:
+        if LOGO_FILE:
+            p = Path(LOGO_FILE)
+            if p.exists() and p.is_file():
+                return p
+    except Exception:
+        pass
+
+    cands = [
+        Path.cwd() / "logo.png",
+        Path.cwd() / "logo.webp",
+        Path.cwd() / "logo.png.png",
+        Path("assets/logo.png"),
+        Path("assets/logo.webp"),
+        Path("static/logo.png"),
+        Path("static/logo.webp"),
+        Path("docs/logo.png"),
+        Path("docs/assets/logo.png"),
+    ]
     try:
         here = Path(__file__).parent
-        cands += [here / "logo.png", here / "logo.png.png"]
+        cands += [
+            here / "logo.png",
+            here / "logo.webp",
+            here / "logo.png.png",
+        ]
     except NameError:
         pass
+
     for p in cands:
-        if p.exists() and p.is_file():
-            return p
+        try:
+            if p.exists() and p.is_file():
+                return p
+        except Exception:
+            pass
     return None
 
 def logo_to_data_uri(p):
