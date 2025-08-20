@@ -1,3 +1,43 @@
+name: "Build & Publish buylist (self-hosted, paginated)"
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [ "main" ]
+  # schedule:
+  #   - cron: "*/30 * * * *"  # 30分毎（UTC）。使うときはコメント解除
+
+permissions:
+  contents: write
+
+concurrency:
+  group: buylist-publish
+  cancel-in-progress: true
+
+jobs:
+  build:
+    # 自前ランナーのラベルに合わせて調整。例では Windows & local ラベルを想定
+    runs-on: [ self-hosted, Windows, local ]
+
+    defaults:
+      run:
+        shell: powershell
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas openpyxl pillow requests
+
+      # ========= POS からページング取得（/auth?currentPage=… と /api?take&skip=… の両対応）=========
       - name: Fetch from POS (paginate)
         env:
           POS_FILE_URL:       ${{ secrets.POS_FILE_URL }}
@@ -14,7 +54,6 @@
             if ($null -eq $s) { return '' }
             ($s -replace "`r|`n",' ') -replace '\^&','&' -replace '\^','' | ForEach-Object { $_.Trim('"').Trim("'").Trim() }
           }
-
           function FirstNonEmpty([string[]]$vals){
             foreach($v in $vals){ if ($null -ne $v -and $v.Trim() -ne ''){ return $v } }
             return $null
@@ -45,7 +84,7 @@
           $hasPage = ($qs.AllKeys -contains 'currentPage') -or ($Url -like '*/auth/*')
           $hasTS   = ((($qs['take'] -ne $null) -and ($qs['skip'] -ne $null)) -or ($Url -like '*/api/*'))
 
-          # ---- PowerShell 5.1 互換：?? を使わない ----
+          # PowerShell 5.1 互換（?? を使わない）
           $pageSizeStr = FirstNonEmpty @($qs['itemsPerPage'], $qs['take'], $env:POS_PAGE_SIZE, '100')
           $pageSize = 0; [void][int]::TryParse($pageSizeStr, [ref]$pageSize); if ($pageSize -lt 1) { $pageSize = 100 }
 
@@ -55,7 +94,6 @@
           $maxPagesStr = FirstNonEmpty @($env:POS_MAX_PAGES, '50')
           $maxPages = 0; [void][int]::TryParse($maxPagesStr, [ref]$maxPages); if ($maxPages -lt 1) { $maxPages = 50 }
 
-          # ---- headers ----
           $headers = @{
             'User-Agent'      = 'Mozilla/5.0'
             'Accept'          = '*/*'
@@ -128,3 +166,57 @@
 
           $all | ConvertTo-Json -Depth 100 | Set-Content -Encoding UTF8 data/items.json
           Write-Host "Total items: $($all.Count)"
+
+      - name: Convert JSON to CSV
+        if: ${{ hashFiles('data/items.json') != '' }}
+        run: |
+          $py = @'
+          import json, pandas as pd
+          from pandas import json_normalize
+          with open("data/items.json","r",encoding="utf-8") as f:
+              data = json.load(f)
+          if isinstance(data, dict):
+              for k in ("items","data","products","result","value"):
+                  if k in data and isinstance(data[k], list):
+                      data = data[k]; break
+          if not isinstance(data, list):
+              data = [data]
+          df = json_normalize(data, sep=".")
+          df.to_csv("data/buylist.csv", index=False, encoding="utf-8")
+          print("rows:", len(df), "cols:", len(df.columns))
+          '@
+          Set-Content -Encoding UTF8 -LiteralPath .\convert_json_to_csv.py -Value $py
+          python .\convert_json_to_csv.py
+          Get-ChildItem data
+
+      - name: Build static pages
+        env:
+          OUT_DIR: docs
+          PER_PAGE: "80"
+          BUILD_THUMBS: "0"
+        run: |
+          $candidates = @("data\buylist.xlsx","data\buylist.csv","buylist.xlsx","buylist.csv")
+          $input = $null
+          foreach ($p in $candidates) { if (Test-Path $p) { $input = $p; break } }
+          if (-not $input) { throw "No input data found (POS fetch failed and none in repo)." }
+          Write-Host ("Using input: " + $input)
+          python gen_buylist.py $input
+
+      - name: Commit & push docs
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A docs
+          if (git diff --cached --quiet) {
+            Write-Host "No changes in docs/"
+          } else {
+            git commit -m "update buylist (auto)"
+            git push
+          }
+
+      - name: Upload debug artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pos-debug
+          path: data/**
