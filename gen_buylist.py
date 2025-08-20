@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
 """
 デュエマ買取表 静的ページ生成（豪華版・横4列・完全オフライン・高速スマホ最適化）
-- データは assets/cards.min.js（短キー）に分離、HTMLは各モード1枚のみ
-- 画像は軽量WebPサムネ（自家ホスト）、遅延読込、失敗時はフル画像へ
-- スマホ/遅回線/低コア端末で PER_PAGE と eagerLoad を自動調整
-- 検索は「入力欄ごと」に項目別マッチ（名前/型番/弾+ブースター/レア）
-- Excel は buylist.xlsx を最優先で自動検出
-- EXCEL_PATH / OUT_DIR / PER_PAGE / BUILD_THUMBS で上書き可
+- CSV/Excel 自動対応。二重ヘッダ(日本語→英語キー)も自動正規化
+- 列は「ヘッダ名優先 → 指定位置フォールバック」で確実にマッピング
+- 画像は軽量WebPサムネ（自家ホスト）/なければフルを遅延読込。失敗時はフルへ自動フォールバック
+- 画像ON時は「カード名(C)＋型番(F)＋買取価格(O)のみ」を表示
+- スマホで型番がめり込まない（バッジ化＋nowrap）
+- データは各HTMLにインライン埋め込み（外部 cards.min.js 依存なし）
 """
 
 from pathlib import Path
@@ -25,32 +25,34 @@ except Exception:
     Image = None
 
 # ========= 設定 =========
-DEFAULT_EXCEL = "buylist.xlsx"                 # 最優先はルートの buylist.xlsx
-ALT_EXCEL     = "data/buylist.xlsx"            # サブフォルダ候補
+DEFAULT_EXCEL = "buylist.xlsx"
+ALT_EXCEL     = "data/buylist.xlsx"
 FALLBACK_WINDOWS = r"C:\Users\user\Desktop\デュエマ買取表\buylist.xlsx"
 
+# 受け側は CSV もあり得るのでファイル名は EXCEL_PATH で流用（自動検出）
 EXCEL_PATH = os.getenv("EXCEL_PATH", DEFAULT_EXCEL)
 SHEET_NAME = os.getenv("SHEET_NAME", "シート1")
 OUT_DIR    = Path(os.getenv("OUT_DIR", "docs"))
-PER_PAGE   = int(os.getenv("PER_PAGE", "80"))  # 画面内ページング単位
-BUILD_THUMBS = os.getenv("BUILD_THUMBS", "1") == "1"  # サムネ生成ON/OFF
+PER_PAGE   = int(os.getenv("PER_PAGE", "80"))
+BUILD_THUMBS = os.getenv("BUILD_THUMBS", "1") == "1"
 
-# ★ 追加：argv[1] があれば EXCEL_PATH を上書き（バッチからのフルパス対応）
+# argvでファイルパス上書き
 if len(sys.argv) > 1 and sys.argv[1]:
     EXCEL_PATH = sys.argv[1]
 
-# 列番号（0始まり）
-COL_NAME   = 1
-COL_PACK   = 2
-COL_CODE   = 3
-COL_RARITY = 4
-COL_BOOST  = 5
-COL_PRICE  = 7
-COL_IMGURL = 9
+# ===== 位置フォールバック用（0始まり） =====
+# ユーザー指定：C(2), E(4), F(5), G(6), H(7), O(14=買取価格), Q(16=画像URL)
+IDX_NAME   = 2
+IDX_PACK   = 4
+IDX_CODE   = 5
+IDX_RARITY = 6
+IDX_BOOST  = 7
+IDX_PRICE  = 14
+IDX_IMGURL = 16
 
 # サムネ設定
 THUMB_DIR = OUT_DIR / "assets" / "thumbs"
-THUMB_W = 600  # ← 指定どおり 600 にアップ（横4列のまま高精細）
+THUMB_W = 600
 
 # ---- ロゴ探索 ----
 def find_logo_path():
@@ -73,39 +75,74 @@ def logo_to_data_uri(p):
 
 LOGO_URI = logo_to_data_uri(find_logo_path())
 
-# ========= Excel 探索 & 読み込み =========
-def resolve_excel_path(pref: str|None) -> Path:
+# ========= 入力ファイル 読み込み・正規化（CSV/Excel自動対応） =========
+def _read_csv_auto(path: Path) -> pd.DataFrame:
+    for enc in ("utf-8-sig", "cp932", "utf-8"):
+        try:
+            return pd.read_csv(path, encoding=enc)
+        except Exception:
+            pass
+    return pd.read_csv(path)
+
+def _normalize_two_header_layout(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    二重ヘッダ（2行見出し→英語キー行→データ）のCSV/Excelを、
+    英語キー行を正式ヘッダにして、その2行下からデータ始まりに整える。
+    例: ... , display_name, expansion, cardnumber, rarity, pack_name, buy_price, allow_auto_print_label, ...
+    """
+    try:
+        # 英語キー候補の行を検出（display_name と cardnumber が所定列にいることを条件に緩く判定）
+        cand = []
+        for i in range(min(10, len(df))):
+            row = df.iloc[i].astype(str).tolist()
+            if "display_name" in row and "cardnumber" in row:
+                cand.append(i)
+        if not cand:
+            return df
+        hdr = cand[0]
+        # 多くの書式で「英語キー行の2行下からデータ」になっていることが多い
+        start = hdr + 2
+        df2 = df.iloc[start:].copy()
+        # 列名に英語キー行を採用
+        cols = df.iloc[hdr].tolist()
+        df2.columns = cols
+        return df2.reset_index(drop=True)
+    except Exception:
+        return df
+
+def _resolve_input(pref: str|None) -> Path:
     cands = []
     if pref: cands.append(Path(pref))
-    cands += [
-        Path("buylist.xlsx"),
-        Path(ALT_EXCEL),
-        Path(FALLBACK_WINDOWS),
-    ]
+    cands += [Path("buylist.csv"), Path("buylist.xlsx"), Path(ALT_EXCEL), Path(FALLBACK_WINDOWS)]
     for p in cands:
         if p.exists() and p.is_file():
             return p
-    files = sorted((Path(p) for p in glob.glob("*.xlsx")), key=lambda x: x.stat().st_mtime, reverse=True)
-    if files:
-        return files[0]
-    raise FileNotFoundError("Excelが見つかりません:\n  " + "\n  ".join(str(p) for p in cands))
+    files = sorted(
+        [Path(p) for p in glob.glob("*.csv")] + [Path(p) for p in glob.glob("*.xlsx")],
+        key=lambda x: x.stat().st_mtime, reverse=True
+    )
+    if files: return files[0]
+    raise FileNotFoundError("CSV/Excel が見つかりません。")
 
-def load_excel(path_str: str, sheet_name: str|None) -> pd.DataFrame:
-    p = resolve_excel_path(path_str if path_str else None)
+def load_buylist_any(path_hint: str, sheet_name: str|None) -> pd.DataFrame:
+    p = _resolve_input(path_hint)
+    if p.suffix.lower()==".csv":
+        df0 = _read_csv_auto(p)
+        return _normalize_two_header_layout(df0)
+    # Excel
     try:
         if sheet_name:
-            return pd.read_excel(p, sheet_name=sheet_name, header=None, engine="openpyxl")
-        xls = pd.ExcelFile(p, engine="openpyxl")
-        return pd.read_excel(xls, sheet_name=xls.sheet_names[0], header=None, engine="openpyxl")
+            df0 = pd.read_excel(p, sheet_name=sheet_name, header=None, engine="openpyxl")
+        else:
+            xls = pd.ExcelFile(p, engine="openpyxl")
+            df0 = pd.read_excel(xls, sheet_name=xls.sheet_names[0], header=None, engine="openpyxl")
     except Exception:
         xls = pd.ExcelFile(p, engine="openpyxl")
-        return pd.read_excel(xls, sheet_name=xls.sheet_names[0], header=None, engine="openpyxl")
+        df0 = pd.read_excel(xls, sheet_name=xls.sheet_names[0], header=None, engine="openpyxl")
+    # Excelでも二重ヘッダの可能性あり
+    return _normalize_two_header_layout(df0)
 
-try:
-    df_raw = load_excel(EXCEL_PATH, SHEET_NAME)
-except FileNotFoundError as e:
-    print(str(e))
-    sys.exit(1)
+df_raw = load_buylist_any(EXCEL_PATH, SHEET_NAME)
 
 # ========= ユーティリティ =========
 SEP_RE = re.compile(r"[\s\u30FB\u00B7·/／\-_—–−]+")
@@ -122,14 +159,42 @@ def to_int_series(s: pd.Series) -> pd.Series:
     s = s.astype(str).str.replace(r"[^\d\.\-,]", "", regex=True).str.replace(",", "", regex=False)
     return pd.to_numeric(s, errors="coerce").round().astype("Int64")
 
-def detail_to_img(url: str) -> str:
-    if not isinstance(url, str) or not url: return ""
-    if "cardimage" in url: return url
-    if "id=" in url:
-        parsed = urlparse(url); qs = parse_qs(parsed.query)
+def detail_to_img(val: str) -> str:
+    """
+    URL抽出の鉄板:
+      - https://… そのまま
+      - =IMAGE("…") / IMAGE('…') / @IMAGE("…") / 全角＠IMAGE("…")
+      - ="https://…" / 'https://…'
+      - 文中にURLがあれば最初を採用
+      - ?id=slug → cardimage 変換 / 末尾スラッグ → cardimage
+    """
+    if not isinstance(val, str):
+        return ""
+    s = val.strip()
+    s = s.replace("＠", "@").replace("＂", '"').replace("＇", "'")
+
+    m = re.search(r'@?IMAGE\s*\(\s*["\']\s*(https?://[^"\']+)\s*["\']', s, flags=re.IGNORECASE)
+    if m: return m.group(1).strip()
+
+    m = re.search(r'^[=]?\s*["\']\s*(https?://[^"\']+)\s*["\']\s*$', s)
+    if m: return m.group(1).strip()
+
+    m = re.search(r'(https?://[^\s"\')]+)', s)
+    if m: return m.group(1).strip()
+
+    if s.lower().startswith(("http://","https://")):
+        return s
+
+    parsed = urlparse(s)
+    if "id=" in s:
+        qs = parse_qs(parsed.query)
         id_val = qs.get("id", [parsed.path.split("/")[-1]])[0]
-        return f"https://dm.takaratomy.co.jp/wp-content/card/cardimage/{id_val}.jpg"
-    return url if url.startswith("http") else ""
+        if id_val:
+            return f"https://dm.takaratomy.co.jp/wp-content/card/cardimage/{id_val}.jpg"
+    slug = (parsed.path.split("/")[-1] or "").strip()
+    if slug:
+        return f"https://dm.takaratomy.co.jp/wp-content/card/cardimage/{slug}.jpg"
+    return ""
 
 def nfkc_lower(s: str) -> str:
     return ud.normalize("NFKC", s or "").lower()
@@ -148,7 +213,45 @@ def searchable_row_py(row: pd.Series) -> str:
     parts = [row.get(k, "") for k in ("name","code","pack","rarity","booster")]
     return normalize_for_search_py(" ".join(map(str, parts)))
 
-# サムネ生成
+# ========= 列アクセス（ヘッダ名優先→位置フォールバック） =========
+def get_col(df: pd.DataFrame, names: list[str], fallback_idx: int|None):
+    for nm in names:
+        if nm in df.columns:
+            return df[nm]
+    if fallback_idx is not None and fallback_idx < df.shape[1]:
+        return df.iloc[:, fallback_idx]
+    return pd.Series([""]*len(df), index=df.index)
+
+# 英語キー / 日本語名 / 位置フォールバック
+S_NAME   = get_col(df_raw, ["display_name","商品名"],            IDX_NAME)   # C
+S_PACK   = get_col(df_raw, ["expansion","エキスパンション"],      IDX_PACK)   # E
+S_CODE   = get_col(df_raw, ["cardnumber","カード番号"],           IDX_CODE)   # F
+S_RARITY = get_col(df_raw, ["rarity","レアリティ"],               IDX_RARITY) # G
+S_BOOST  = get_col(df_raw, ["pack_name","封入パック","パック名"],  IDX_BOOST)  # H
+S_PRICE  = get_col(df_raw, ["buy_price","買取価格"],             IDX_PRICE)  # O
+# 実データで画像URLが allow_auto_print_label に入っていたため最優先に
+S_IMGURL = get_col(df_raw, ["allow_auto_print_label","画像URL"],  IDX_IMGURL) # Q
+
+# ========= データ整形 =========
+def col(df, i, default=""):
+    return df.iloc[:, i] if i < df.shape[1] else pd.Series([default]*len(df))
+
+df = pd.DataFrame({
+    "name":    clean_text(S_NAME),
+    "pack":    clean_text(S_PACK),
+    "code":    clean_text(S_CODE),
+    "rarity":  clean_text(S_RARITY),
+    "booster": clean_text(S_BOOST),
+    "price":   to_int_series(S_PRICE) if len(S_PRICE) else pd.Series([None]*len(df_raw)),
+    "image":   clean_text(S_IMGURL).map(detail_to_img),
+})
+df = df[~df["name"].str.match(r"^Unnamed", na=False)]
+df = df[df["name"].str.strip()!=""].reset_index(drop=True)
+
+# 検索用の事前正規化
+df["s"] = df.apply(searchable_row_py, axis=1)
+
+# サムネ列
 def url_to_hash(u:str)->str:
     return hashlib.md5(u.encode("utf-8")).hexdigest()
 
@@ -158,7 +261,7 @@ def ensure_thumb(url: str) -> str|None:
     fname = url_to_hash(url) + ".webp"
     outp = THUMB_DIR / fname
     if outp.exists():
-        return f"assets/thumbs/{fname}"  # JS側で ../ を付与して参照
+        return f"assets/thumbs/{fname}"
     if not (requests and Image):
         return None
     try:
@@ -175,30 +278,39 @@ def ensure_thumb(url: str) -> str|None:
     except Exception:
         return None
 
-# ========= データ整形 =========
-def col(df, i, default=""):
-    return df.iloc[:, i] if i < df.shape[1] else pd.Series([default]*len(df))
-
-df = pd.DataFrame({
-    "name":    clean_text(col(df_raw, COL_NAME)),
-    "pack":    clean_text(col(df_raw, COL_PACK)),
-    "code":    clean_text(col(df_raw, COL_CODE)),
-    "rarity":  clean_text(col(df_raw, COL_RARITY)),
-    "booster": clean_text(col(df_raw, COL_BOOST)),
-    "price":   to_int_series(col(df_raw, COL_PRICE) if COL_PRICE < df_raw.shape[1] else pd.Series([None]*len(df_raw))),
-    "image":   clean_text(col(df_raw, COL_IMGURL)).map(detail_to_img),
-})
-df = df[~df["name"].str.match(r"^Unnamed", na=False)]
-df = df[df["name"].str.strip()!=""].reset_index(drop=True)
-
-# 検索用の事前正規化（互換のため s は残すが JS は項目別キャッシュを使用）
-df["s"] = df.apply(searchable_row_py, axis=1)
-
-# サムネ列
 if BUILD_THUMBS:
     df["thumb"] = df["image"].map(ensure_thumb)
 else:
     df["thumb"] = ""
+
+# ====== データJSON（インライン埋め込み用） ======
+def build_payload(df: pd.DataFrame) -> tuple[str,str]:
+    for c in ["name","pack","code","rarity","booster","price","image","thumb","s"]:
+        if c not in df.columns:
+            df[c] = "" if c!="price" else None
+    records = []
+    for rec in df[["name","pack","code","rarity","booster","price","image","thumb","s"]].to_dict(orient="records"):
+        price = rec.get("price", None)
+        try:
+            price = None if pd.isna(price) else int(price)
+        except Exception:
+            price = None
+        records.append({
+            "n": rec.get("name",""),
+            "p": rec.get("pack",""),
+            "c": rec.get("code",""),
+            "r": rec.get("rarity",""),
+            "b": rec.get("booster",""),
+            "pr": price,
+            "i": rec.get("image",""),
+            "t": rec.get("thumb",""),
+            "s": rec.get("s",""),
+        })
+    payload = json.dumps(records, ensure_ascii=False, separators=(",",":"))
+    ver = hashlib.md5(payload.encode("utf-8")).hexdigest()[:8]
+    return ver, payload
+
+CARDS_VER, CARDS_JSON = build_payload(df)
 
 # ========= 見た目（CSS） =========
 base_css = """
@@ -228,7 +340,10 @@ header{
   grid-template-areas: "q1 q2" "q3 q4" "acts acts";
   gap:10px;margin:10px 0 14px;align-items:center;
 }
-#nameQ{grid-area:q1} #codeQ{grid-area:q2} #packQ{grid-area:q3} #rarityQ{grid-area:q4}
+#nameQ{grid-area:q1}
+#codeQ{grid-area:q2}
+#packQ{grid-area:q3}
+#rarityQ{grid-area:q4}
 .controls .btns{ grid-area:acts; display:flex; gap:8px; flex-wrap:wrap }
 input.search{background:#fff;border:1px solid var(--border);color:#111;border-radius:12px;padding:11px 12px;font-size:14px;outline:none;min-width:0;transition:box-shadow .12s ease;width:100%}
 input.search::placeholder{color:#9ca3af}
@@ -247,8 +362,11 @@ input.search:focus{ box-shadow:0 0 0 2px rgba(17,24,39,.08) }
 .th{aspect-ratio:3/4;background:#f3f4f6;cursor:zoom-in}
 .th img{width:100%;height:100%;object-fit:cover;display:block;background:#f3f4f6}
 .b{padding:10px 12px}
-.n{font-size:14px;font-weight:800;line-height:1.35;margin:0 0 6px;color:#111}
-.n .code{margin-left:6px;font-weight:700;font-size:12px;color:var(--muted)}
+
+/* ★ 型番のめり込み対策：バッジ化＋nowrap、タイトルはflexで折返し最適化 */
+.n{font-size:14px;font-weight:800;line-height:1.25;margin:0 0 6px;color:#111;display:flex;gap:6px;align-items:baseline;flex-wrap:wrap;word-break:break-word}
+.n .code{margin-left:0;font-weight:700;font-size:12px;color:#374151;background:#f3f4f6;border:1px solid #e5e7eb;border-radius:8px;padding:2px 6px;white-space:nowrap}
+
 .meta{font-size:11px;color:var(--muted);word-break:break-word}
 .p{margin-top:6px;display:flex;flex-wrap:wrap}
 .mx{font-weight:1000;color:var(--accent);font-size:clamp(16px, 2.4vw, 22px);line-height:1.05;text-shadow:none;word-break:break-word; overflow-wrap:anywhere;font-variant-numeric:tabular-nums;white-space:nowrap;display:inline-block;max-width:100%}
@@ -257,23 +375,19 @@ nav.simple{display:flex;justify-content:center;align-items:center;margin:14px 0;
 nav.simple a{color:#111;background:#fff;border:1px solid var(--border);padding:8px 16px;border-radius:12px;text-decoration:none;white-space:nowrap}
 nav.simple a.disabled{opacity:.45;pointer-events:none}
 nav.simple strong{color:#111;user-select:none}
+
 .viewer{position:fixed; inset:0; background:rgba(0,0,0,.86); display:none; align-items:center; justify-content:center; z-index:2000}
 .viewer.show{display:flex}
 .viewer .vc{position:relative;max-width:92vw;max-height:92vh}
 .viewer img{max-width:92vw;max-height:92vh;display:block}
 .viewer button.close{position:absolute;top:-12px;right:-12px;background:#fff;border:1px solid var(--border);color:#111;border-radius:999px;width:38px;height:38px;cursor:pointer}
+
 @media (max-width:600px){
-  .header-wrap{display:grid;grid-template-columns:auto 1fr;grid-template-areas:"logo title" "actions actions";align-items:center;gap:10px}
-  .brand-left{ grid-area:logo; justify-content:flex-start }
-  .brand-left img{ height:56px }
-  .center-ttl{ grid-area:title; font-size:clamp(20px, 7vw, 28px); line-height:1.1; text-align:left; white-space:nowrap }
-  .actions{ grid-area:actions; justify-content:center }
-
-  /* ★ 指定どおり：スマホで余白＆隙間をさらに削ってカード幅を最大化（4列維持） */
-  .wrap{ padding:4px }                 /* ← 8px → 4px */
-  .grid.grid-img{ gap:2px }            /* ← 4px → 2px */
-
-  .b{padding:6px}.n{font-size:11px}
+  .wrap{ padding:4px }
+  .grid.grid-img{ gap:2px }
+  .b{padding:6px}
+  .n{font-size:12px}
+  .n .code{font-size:11px;padding:1px 6px;border-radius:6px}
   .mx{ font-size:clamp(12px, 4.2vw, 16px); white-space:nowrap }
   nav.simple{gap:8px; flex-wrap:nowrap; justify-content:space-between}
   nav.simple a{padding:6px 10px; font-size:12px; display:inline-flex}
@@ -282,7 +396,7 @@ nav.simple strong{color:#111;user-select:none}
 small.note{color:var(--muted)}
 """
 
-# ========= JS（欄ごと一致＋スマホ最適化＋遅延読込＋画像ON/OFF修正＋アルファベット検索対応） =========
+# ========= JS（画像ON時は「名前＋型番＋価格のみ」） =========
 base_js = r"""
 (function(){
   const header = document.querySelector('header');
@@ -309,7 +423,6 @@ base_js = r"""
   const viewerImg = document.getElementById('viewerImg');
   const viewerClose = document.getElementById('viewerClose');
 
-  // ---- 端末/回線判定 ----
   const isMobile = matchMedia('(max-width: 640px)').matches;
   const netType = navigator.connection?.effectiveType || '';
   const slowNet = /^(slow-2g|2g|3g)$/i.test(netType);
@@ -370,6 +483,12 @@ base_js = r"""
     };
   }
   let ALL = Array.isArray(window.__CARDS__) ? window.__CARDS__.map(norm) : [];
+  if (!ALL.length) {
+    const hint = document.createElement('p');
+    hint.style.cssText='color:#dc2626;padding:10px;margin:10px;border:1px dashed #fecaca;background:#fff5f5';
+    hint.textContent = 'データが0件です。入力CSV/Excelのヘッダと列位置を確認してください。';
+    document.querySelector('main')?.prepend(hint);
+  }
 
   ALL = ALL.map(it => ({
     ...it,
@@ -396,12 +515,14 @@ base_js = r"""
     });
   }
 
+  // ★画像ON時は「カード名＋型番＋価格のみ」
   function cardHTML_img(it){
     const nameEsc = escHtml(it.name||'');
     const full = it.image||'';
     const codeEsc = escHtml(it.code||'');
     let thumb = it.thumb || full;
-    if (thumb && !/^https?:\/\//.test(thumb) && !thumb.startsWith('../')) thumb = '../' + thumb;
+    const hasHttp = /^https?:\/\//.test(thumb);
+    if (thumb && !hasHttp && !thumb.startsWith('../')) thumb = '../' + thumb;
     const codeHtml = codeEsc ? `<span class="code">[${codeEsc}]</span>` : '';
     return `
   <article class="card">
@@ -543,7 +664,6 @@ base_js = r"""
     if (e) { e.preventDefault(); e.stopPropagation(); }
     showImages = !showImages;
     localStorage.setItem('showImages', showImages ? '1' : '0');
-    try { io && io.disconnect(); } catch(_) {}
     setImgBtn();
     render();
   }
@@ -568,48 +688,14 @@ base_js = r"""
 })();
 """
 
-# ===== 共通データを書き出し（assets/cards.min.js） =====
-def write_cards_js(df: pd.DataFrame) -> str:
-    for c in ["name","pack","code","rarity","booster","price","image","thumb","s"]:
-        if c not in df.columns:
-            df[c] = "" if c!="price" else None
-
-    records = []
-    for rec in df[["name","pack","code","rarity","booster","price","image","thumb","s"]].to_dict(orient="records"):
-        price = rec.get("price", None)
-        try:
-            price = None if pd.isna(price) else int(price)
-        except Exception:
-            price = None
-        records.append({
-            "n": rec.get("name",""),
-            "p": rec.get("pack",""),
-            "c": rec.get("code",""),
-            "r": rec.get("rarity",""),
-            "b": rec.get("booster",""),
-            "pr": price,
-            "i": rec.get("image",""),
-            "t": rec.get("thumb",""),
-            "s": rec.get("s",""),
-        })
-
-    payload = json.dumps(records, ensure_ascii=False, separators=(",",":"))
-    ver = hashlib.md5(payload.encode("utf-8")).hexdigest()[:8]
-    assets = OUT_DIR / "assets"
-    assets.mkdir(parents=True, exist_ok=True)
-    (assets / "cards.min.js").write_text("window.__CARDS__="+payload, encoding="utf-8")
-    return ver
-
-# ===== HTML（JSONは外部JSを先読み、ロジックはdefer） =====
-def html_page(title: str, js_source: str, logo_uri: str, cards_ver: str) -> str:
+# ===== HTML（データはインライン埋め込み） =====
+def html_page(title: str, js_source: str, logo_uri: str, cards_json: str) -> str:
     shop_svg = "<svg viewBox='0 0 24 24' aria-hidden='true' fill='currentColor'><path d='M3 9.5V8l2.2-3.6c.3-.5.6-.7 1-.7h11.6c.4 0 .7.2.9.6L21 8v1.5c0 1-.8 1.8-1.8 1.8-.9 0-1.6-.6-1.8-1.4-.2.8-.9 1.4-1.8 1.4s-1.6-.6-1.8-1.4c-.2.8-.9 1.4-1.8 1.4s-1.6-.6-1.8-1.4c-.2.8-.9 1.4-1.8 1.4s-1.6-.6-1.8-1.4c-.2.8-.9 1.4-1.8 1.4s-1.6-.6-1.8-1.4c-.2.8-.9 1.4-1.8 1.4C3.8 11.3 3 10.5 3 9.5zM5 12.5h14V20c0 .6-.4 1-1 1H6c-.6 0-1-.4-1-1v-7.5zm4 1.5v5h6v-5H9zM6.3 5.2 5 7.5h14l-1.3-2.3H6.3z'/></svg>"
     login_svg= "<svg viewBox='0 0 24 24' aria-hidden='true' fill='currentColor'><path d='M12 12a5 5 0 1 0-5-5 5 5 0 0 0 5 5zm0 2c-4.418 0-8 2.239-8 5v2h16v-2c0-2.761-3.582-5-8-5z'/></svg>"
 
     parts = []
     parts.append("<!doctype html><html lang='ja'><head><meta charset='utf-8'>")
     parts.append("<meta name='viewport' content='width=device-width,initial-scale=1'>")
-    parts.append("<link rel='preconnect' href='https://dm.takaratomy.co.jp' crossorigin>")
-    parts.append("<link rel='dns-prefetch' href='//dm.takaratomy.co.jp'>")
     parts.append("<style>"); parts.append(base_css); parts.append("</style></head><body>")
     parts.append("<div class='bg-deco' aria-hidden='true'></div>")
     parts.append("<header><div class='header-wrap'>")
@@ -617,7 +703,6 @@ def html_page(title: str, js_source: str, logo_uri: str, cards_ver: str) -> str:
     if logo_uri:
         parts.append(f"<!-- LOGO embedded -->\n<img src='{logo_uri}' alt='Shop Logo'>")
     else:
-        parts.append("<!-- LOGO missing: fallback -->")
         parts.append("<div class='brand-fallback'>YOUR SHOP</div>")
     parts.append("</div>")
     parts.append(f"<div class='center-ttl'>{html_mod.escape(title)}</div>")
@@ -641,31 +726,31 @@ def html_page(title: str, js_source: str, logo_uri: str, cards_ver: str) -> str:
     parts.append("  <small class='note'>このページ内のデータのみで検索・並び替え・ページングできます。画像クリックで拡大表示。</small>")
     parts.append("</main>")
 
-    # データは先読み（defer なし）
-    parts.append(f"<script src='../assets/cards.min.js?v={cards_ver}'></script>")
-    parts.append("<script>if(!Array.isArray(window.__CARDS__)){document.write(\"<p style='color:#dc2626;padding:16px'>データが読み込めませんでした。<code>docs/assets/cards.min.js</code> の存在とパスを確認してください。</p>\");}</script>")
+    # ★ データをインライン埋め込み（外部ファイル不要）
+    parts.append("<script>")
+    parts.append("window.__CARDS__=" + cards_json + ";")
+    parts.append("</script>")
 
     parts.append("<div id='viewer' class='viewer'><div class='vc'><img id='viewerImg' alt=''><button id='viewerClose' class='close'>×</button></div></div>")
-    parts.append("<script defer>"); parts.append(js_source); parts.append("</script></body></html>")
+    parts.append("<script>")
+    parts.append(js_source)
+    parts.append("</script></body></html>")
     return "".join(parts)
 
 # ========= 出力 =========
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-# データを共通JSに一回だけ書き出し（バージョン付与でキャッシュ更新）
-CARDS_VER = write_cards_js(df)
-
-def write_mode(dir_name: str, initial_sort_js_literal: str, title_text: str, cards_ver: str):
+def write_mode(dir_name: str, initial_sort_js_literal: str, title_text: str):
     sub = OUT_DIR / dir_name
     sub.mkdir(parents=True, exist_ok=True)
     js = base_js.replace("__PER_PAGE__", str(PER_PAGE)).replace("__INITIAL_SORT__", initial_sort_js_literal)
-    html = html_page(title_text, js, LOGO_URI, cards_ver)
+    html = html_page(title_text, js, LOGO_URI, CARDS_JSON)
     (sub / "index.html").write_text(html, encoding="utf-8")
 
-# ★ default は初期表示を「価格高い順」に変更
-write_mode("default", "'desc'", "デュエマ買取表", CARDS_VER)
-write_mode("price_desc", "'desc'", "デュエマ買取表（price_desc）", CARDS_VER)
-write_mode("price_asc",  "'asc'",  "デュエマ買取表（price_asc）",  CARDS_VER)
+# 初期表示は価格高い順。3モード生成
+write_mode("default", "'desc'", "デュエマ買取表")
+write_mode("price_desc", "'desc'", "デュエマ買取表（price_desc）")
+write_mode("price_asc",  "'asc'",  "デュエマ買取表（price_asc）")
 
 # ルートは default/ にリダイレクト
 (OUT_DIR / "index.html").write_text("<meta http-equiv='refresh' content='0; url=default/'>", encoding="utf-8")
