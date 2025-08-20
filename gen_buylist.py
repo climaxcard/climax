@@ -383,6 +383,26 @@ nav.simple strong{color:#111;user-select:none}
 .viewer button.close{position:absolute;top:-12px;right:-12px;background:#fff;border:1px solid var(--border);color:#111;border-radius:999px;width:38px;height:38px;cursor:pointer}
 
 @media (max-width:600px){
+  /* ヘッダー：1段目=ロゴ/アクション、2段目=タイトル（全幅） */
+  header{ padding:8px 10px }
+  .header-wrap{
+    grid-template-columns: auto 1fr;
+    grid-template-rows: auto auto;
+    gap: 6px 10px;
+  }
+  .brand-left{ grid-column:1; grid-row:1; }
+  .brand-left img{ height:44px } /* ロゴ少し小さめ */
+  .actions{ grid-column:2; grid-row:1; justify-self:end }
+  .center-ttl{
+    grid-column:1 / -1;   /* 2列をまたいで全幅 */
+    grid-row:2;
+    text-align:center;
+    white-space:normal;    /* ← これで改行許可、被り防止 */
+    font-size:16px;
+    line-height:1.2;
+  }
+
+  /* 既存のスマホ向け調整はそのまま維持 */
   .wrap{ padding:4px }
   .grid.grid-img{ gap:2px }
   .b{padding:6px}
@@ -393,7 +413,7 @@ nav.simple strong{color:#111;user-select:none}
   nav.simple a{padding:6px 10px; font-size:12px; display:inline-flex}
   nav.simple strong{font-size:12px}
 }
-small.note{color:var(--muted)}
+
 """
 
 # ========= JS（画像ON時は「名前＋型番＋価格のみ」） =========
