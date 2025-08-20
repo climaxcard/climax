@@ -16,7 +16,6 @@ jobs:
   build:
     runs-on: [self-hosted, local]
 
-    # 既定のシェルを Windows PowerShell に
     defaults:
       run:
         shell: powershell
@@ -35,9 +34,8 @@ jobs:
           python -m pip install --upgrade pip
           pip install pandas openpyxl pillow requests
 
-      # ===== POS 取得（PowerShell 5.1 安全ラッパー） =====
-      - name: Fetch from POS (powershell safe wrapper)
-        id: fetch
+      # ===== POS から取得（PowerShell 5.1 / 文字列最小） =====
+      - name: Fetch from POS (simple + sanitize + debug)
         env:
           POS_FILE_URL:       ${{ secrets.POS_FILE_URL }}
           POS_COOKIE:         ${{ secrets.POS_COOKIE }}
@@ -47,101 +45,93 @@ jobs:
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Force -Path data | Out-Null
 
-          $script = @'
-param(
-  [string]$Url,
-  [string]$Cookie,
-  [string]$AuthHeader,
-  [string]$CsrfHeader
-)
-$ErrorActionPreference = 'Stop'
-New-Item -ItemType Directory -Force -Path data | Out-Null
+          # Sanitize URL/Cookie
+          $url = $env:POS_FILE_URL
+          if (-not $url) { throw 'POS_FILE_URL is empty' }
+          $url = $url -replace '\r|\n',''
+          $url = $url.Trim('"').Trim("'").Trim()
+          $url = $url -replace '\^&','&' -replace '\^',''
+          if ($url -notmatch '^https?://') { throw 'POS_FILE_URL must start with http/https' }
 
-# Sanitize URL/Cookie（改行・外側クォート・ ^ を除去）
-$u = $Url; if (-not $u) { $u = '' }
-$u = $u -replace '\r|\n',''
-$u = $u.Trim('"').Trim("'").Trim()
-$u = $u -replace '\^&','&' -replace '\^',''
-if ($u -notmatch '^https?://') { throw 'POS_FILE_URL invalid (must start with http/https)' }
+          $cookie = $env:POS_COOKIE
+          if (-not $cookie) { $cookie = '' }
+          $cookie = $cookie -replace '\r|\n',''
 
-$c = $Cookie; if (-not $c) { $c = '' }
-$c = $c -replace '\r|\n',''
+          # Mask secrets
+          Write-Output ('::add-mask::' + $url)
+          if ($cookie) { Write-Output ('::add-mask::' + $cookie) }
+          if ($env:POS_AUTH_HEADER)   { Write-Output ('::add-mask::' + $env:POS_AUTH_HEADER) }
+          if ($env:POS_X_CSRF_HEADER) { Write-Output ('::add-mask::' + $env:POS_X_CSRF_HEADER) }
 
-Write-Output "::add-mask::$u"
-if ($c) { Write-Output "::add-mask::$c" }
-if ($AuthHeader) { Write-Output "::add-mask::$AuthHeader" }
-if ($CsrfHeader) { Write-Output "::add-mask::$CsrfHeader" }
+          # Headers（最小構成）
+          $headers = New-Object 'System.Collections.Generic.Dictionary[String,String]'
+          $headers['User-Agent']      = 'Mozilla/5.0'
+          $headers['Accept']          = '*/*'
+          $headers['Accept-Language'] = 'ja,en-US;q=0.9,en;q=0.8'
+          $headers['Content-Type']    = 'application/json'
+          $headers['Referer']         = 'https://pos.mycalinks.com/'
+          $headers['Origin']          = 'https://pos.mycalinks.com'
+          if ($cookie) { $headers['Cookie'] = $cookie }
 
-# ヘッダ（最小構成でクォート地雷回避）
-$headers = New-Object 'System.Collections.Generic.Dictionary[String,String]'
-$headers['User-Agent']      = 'Mozilla/5.0'
-$headers['Accept']          = '*/*'
-$headers['Accept-Language'] = 'ja,en-US;q=0.9,en;q=0.8'
-$headers['Content-Type']    = 'application/json'
-$headers['Referer']         = 'https://pos.mycalinks.com/'
-$headers['Origin']          = 'https://pos.mycalinks.com'
-if ($c) { $headers['Cookie'] = $c }
+          function Add-KVHeader($line) {
+            if ([string]::IsNullOrWhiteSpace($line)) { return }
+            $ix = $line.IndexOf(':')
+            if ($ix -gt 0) {
+              $k = $line.Substring(0,$ix).Trim()
+              $v = $line.Substring($ix+1).Trim()
+              if ($k -and $v) { $headers[$k] = $v }
+            }
+          }
+          Add-KVHeader $env:POS_AUTH_HEADER
+          Add-KVHeader $env:POS_X_CSRF_HEADER
 
-function Add-KVHeader($line) {
-  if ([string]::IsNullOrWhiteSpace($line)) { return }
-  $ix = $line.IndexOf(':')
-  if ($ix -gt 0) {
-    $k = $line.Substring(0,$ix).Trim()
-    $v = $line.Substring($ix+1).Trim()
-    if ($k -and $v) { $headers[$k] = $v }
-  }
-}
-Add-KVHeader $AuthHeader
-Add-KVHeader $CsrfHeader
+          # Fetch
+          $code = 0
+          try {
+            $resp = Invoke-WebRequest -Uri $url -Headers $headers -Method GET -MaximumRedirection 5 -OutFile "data\raw.bin" -ErrorAction Stop
+            if ($resp -and $resp.StatusCode) { $code = [int]$resp.StatusCode } else { $code = 200 }
+            $ct = ''
+            if ($resp -and $resp.Headers) { $ct = $resp.Headers['Content-Type'] }
+            if (-not $ct) { $ct = '' }
+            Set-Content -Encoding ASCII -Path "data\headers.txt" -Value ('content-type: ' + $ct)
+          } catch {
+            if ($_.Exception.Response) {
+              $code = [int]$_.Exception.Response.StatusCode
+              $ct = $_.Exception.Response.ContentType
+              if (-not $ct) { $ct = '' }
+              Set-Content -Encoding ASCII -Path "data\headers.txt" -Value ('content-type: ' + $ct)
+              Copy-Item -Force "data\raw.bin" "data\error_body.bin" -ErrorAction SilentlyContinue
+            } else { throw }
+          }
 
-$code = 0
-try {
-  $resp = Invoke-WebRequest -Uri $u -Headers $headers -Method GET -MaximumRedirection 5 -OutFile 'data\raw.bin' -ErrorAction Stop
-  $code = ($resp.StatusCode) ? [int]$resp.StatusCode : 200
-  $ct = ($resp.Headers['Content-Type']); if (-not $ct) { $ct = '' }
-  Set-Content -Encoding ASCII -Path 'data\headers.txt' -Value ('content-type: ' + $ct)
-}
-catch {
-  if ($_.Exception.Response) {
-    $code = [int]$_.Exception.Response.StatusCode
-    $ct = $_.Exception.Response.ContentType; if (-not $ct) { $ct = '' }
-    Set-Content -Encoding ASCII -Path 'data\headers.txt' -Value ('content-type: ' + $ct)
-    Copy-Item -Force 'data\raw.bin' 'data\error_body.bin' -ErrorAction SilentlyContinue
-  } else { throw }
-}
+          Write-Host ('HTTP ' + $code)
+          if ($code -ne 200) { throw ('HTTP ' + $code + ' (check headers.txt / error_body.bin)') }
 
-Write-Host ('HTTP ' + $code)
-if ($code -ne 200) { throw ('HTTP ' + $code + ' (check headers.txt / error_body.bin)') }
-
-# 保存先決定（Content-Type or 先頭バイト嗅ぎ）
-$ctype = ''
-if (Test-Path 'data\headers.txt') {
-  $line = Get-Content 'data\headers.txt' | Select-Object -Last 1
-  $ctype = ($line -replace '^[^:]+:\s*','').ToLower().Split(';')[0]
-}
-if ($ctype -match 'application/json') {
-  Move-Item -Force 'data\raw.bin' 'data\items.json'
-} elseif ($ctype -match 'text/csv|application/csv') {
-  Move-Item -Force 'data\raw.bin' 'data\buylist.csv'
-} elseif ($ctype -match 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet|application/octet-stream') {
-  Move-Item -Force 'data\raw.bin' 'data\buylist.xlsx'
-} else {
-  $fs = [System.IO.File]::OpenRead('data\raw.bin'); try { $b = $fs.ReadByte() } finally { $fs.Dispose() }
-  if ($b -eq 123) { Move-Item -Force 'data\raw.bin' 'data\items.json' } else { Move-Item -Force 'data\raw.bin' 'data\buylist.xlsx' }
-}
-'@
-
-          Set-Content -Encoding ASCII -LiteralPath .\fetch.ps1 -Value $script
-          Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
-          & .\fetch.ps1 -Url $env:POS_FILE_URL -Cookie $env:POS_COOKIE -AuthHeader $env:POS_AUTH_HEADER -CsrfHeader $env:POS_X_CSRF_HEADER
+          # Save as .xlsx / .csv / .json by Content-Type or sniff
+          $ctype = ''
+          if (Test-Path "data\headers.txt") {
+            $line = Get-Content "data\headers.txt" | Select-Object -Last 1
+            $ctype = ($line -replace '^[^:]+:\s*','').ToLower().Split(';')[0]
+          }
+          if ($ctype -match 'application/json') {
+            Move-Item -Force "data\raw.bin" "data\items.json"
+          } elseif ($ctype -match 'text/csv|application/csv') {
+            Move-Item -Force "data\raw.bin" "data\buylist.csv"
+          } elseif ($ctype -match 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet|application/octet-stream') {
+            Move-Item -Force "data\raw.bin" "data\buylist.xlsx"
+          } else {
+            $fs = [System.IO.File]::OpenRead("data\raw.bin")
+            try { $b = $fs.ReadByte() } finally { $fs.Dispose() }
+            if ($b -eq 123) { Move-Item -Force "data\raw.bin" "data\items.json" } else { Move-Item -Force "data\raw.bin" "data\buylist.xlsx" }
+          }
 
           Get-ChildItem data
 
-      # ===== JSON → CSV 変換（必要時） =====
+      # ===== JSON → CSV（必要時のみ） =====
       - name: Convert JSON to CSV (generic)
         if: ${{ hashFiles('data/items.json') != '' }}
         run: |
-          $code = @'
+          $py = @'
           import json, pandas as pd
           from pandas import json_normalize
           import pathlib
@@ -157,7 +147,7 @@ if ($ctype -match 'application/json') {
           df.to_csv("data/buylist.csv", index=False, encoding="utf-8")
           print("Wrote data/buylist.csv rows=%d cols=%d" % (len(df), len(df.columns)))
           '@
-          $code | Set-Content -Encoding UTF8 .\convert_json_to_csv.py
+          Set-Content -Encoding UTF8 -LiteralPath .\convert_json_to_csv.py -Value $py
           python .\convert_json_to_csv.py
           Get-ChildItem data
 
@@ -174,7 +164,6 @@ if ($ctype -match 'application/json') {
           if (-not $input) { throw "入力データがありません（POS取得失敗 & リポジトリにも無い）" }
           python gen_buylist.py $input
 
-      # ===== docs/ をコミットして公開 =====
       - name: Commit & push docs
         run: |
           git config user.name  "github-actions[bot]"
@@ -187,7 +176,6 @@ if ($ctype -match 'application/json') {
             git push
           }
 
-      # ===== 失敗時調査用アーティファクト =====
       - name: Upload debug artifacts
         if: always()
         uses: actions/upload-artifact@v4
