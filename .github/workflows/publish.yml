@@ -1,11 +1,11 @@
-name: "Build & Publish buylist (self-hosted, paginated)"
+name: "Build & Publish buylist (self-hosted, every 15min)"
 
 on:
   workflow_dispatch: {}
   push:
     branches: [ "main" ]
-  # schedule:
-  #   - cron: "*/30 * * * *"  # 30分毎（UTC）。使うときはコメント解除
+  schedule:
+    - cron: "*/15 * * * *"  # every 15 minutes (UTC)
 
 permissions:
   contents: write
@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   build:
-    # 自前ランナーのラベルに合わせて調整。例では Windows & local ラベルを想定
+    # 自前ランナー側で付けたラベルに合わせて調整（例: Windows + local）
     runs-on: [ self-hosted, Windows, local ]
 
     defaults:
@@ -40,10 +40,10 @@ jobs:
       # ========= POS からページング取得（/auth?currentPage=… と /api?take&skip=… の両対応）=========
       - name: Fetch from POS (paginate)
         env:
-          POS_FILE_URL:       ${{ secrets.POS_FILE_URL }}
-          POS_COOKIE:         ${{ secrets.POS_COOKIE }}
-          POS_AUTH_HEADER:    ${{ secrets.POS_AUTH_HEADER }}
-          POS_X_CSRF_HEADER:  ${{ secrets.POS_X_CSRF_HEADER }}
+          POS_FILE_URL:       ${{ secrets.POS_FILE_URL }}         # 例: https://pos.mycalinks.com/auth/item?genreId=137&itemsPerPage=100
+          POS_COOKIE:         ${{ secrets.POS_COOKIE }}           # DevToolsのCookie一式（暫定）
+          POS_AUTH_HEADER:    ${{ secrets.POS_AUTH_HEADER }}      # 例: Authorization: Bearer xxxxx （必要時）
+          POS_X_CSRF_HEADER:  ${{ secrets.POS_X_CSRF_HEADER }}    # 例: x-csrf-token: xxxxx （必要時）
           POS_MAX_PAGES:      50
           POS_PAGE_SIZE:      100
         run: |
