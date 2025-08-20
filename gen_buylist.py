@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-デュエマ買取表 静的ページ生成（豪華版・横4列・完全オフライン・高速スマホ最適化）
-- CSV/Excel 自動対応。二重ヘッダ(日本語→英語キー)も自動正規化
+デュエマ買取表 静的ページ生成（完成版）
+- レイアウト：上段 左=店舗ロゴ, 右=大きい「デュエマ買取表」 / 下段 中央=Shop & Login アイコン
+- CSV/Excel 自動対応。二重ヘッダ(日本語→英語キー行→データ)も自動正規化
 - 列は「ヘッダ名優先 → 指定位置フォールバック」で確実にマッピング
-- 画像は軽量WebPサムネ（自家ホスト）/なければフルを遅延読込。失敗時はフルへ自動フォールバック
+- 画像は軽量WebPサムネ（自家ホスト）/無ければフルを遅延読込。失敗時はフルへ自動フォールバック
 - 画像ON時は「カード名(C)＋型番(F)＋買取価格(O)のみ」を表示
 - スマホで型番がめり込まない（バッジ化＋nowrap）
 - データは各HTMLにインライン埋め込み（外部 cards.min.js 依存なし）
@@ -29,19 +30,17 @@ DEFAULT_EXCEL = "buylist.xlsx"
 ALT_EXCEL     = "data/buylist.xlsx"
 FALLBACK_WINDOWS = r"C:\Users\user\Desktop\デュエマ買取表\buylist.xlsx"
 
-# 受け側は CSV もあり得るのでファイル名は EXCEL_PATH で流用（自動検出）
-EXCEL_PATH = os.getenv("EXCEL_PATH", DEFAULT_EXCEL)
+EXCEL_PATH = os.getenv("EXCEL_PATH", DEFAULT_EXCEL)  # CSVでもOK（自動検出）
 SHEET_NAME = os.getenv("SHEET_NAME", "シート1")
 OUT_DIR    = Path(os.getenv("OUT_DIR", "docs"))
 PER_PAGE   = int(os.getenv("PER_PAGE", "80"))
 BUILD_THUMBS = os.getenv("BUILD_THUMBS", "1") == "1"
 
-# argvでファイルパス上書き
 if len(sys.argv) > 1 and sys.argv[1]:
     EXCEL_PATH = sys.argv[1]
 
 # ===== 位置フォールバック用（0始まり） =====
-# ユーザー指定：C(2), E(4), F(5), G(6), H(7), O(14=買取価格), Q(16=画像URL)
+# 指定：C(2), E(4), F(5), G(6), H(7), O(14=買取価格), Q(16=画像URL)
 IDX_NAME   = 2
 IDX_PACK   = 4
 IDX_CODE   = 5
@@ -54,7 +53,7 @@ IDX_IMGURL = 16
 THUMB_DIR = OUT_DIR / "assets" / "thumbs"
 THUMB_W = 600
 
-# ---- ロゴ探索 ----
+# ---- ロゴ探索（任意） ----
 def find_logo_path():
     cands = [Path(os.getcwd()) / "logo.png", Path(os.getcwd()) / "logo.png.png"]
     try:
@@ -86,26 +85,22 @@ def _read_csv_auto(path: Path) -> pd.DataFrame:
 
 def _normalize_two_header_layout(df: pd.DataFrame) -> pd.DataFrame:
     """
-    二重ヘッダ（2行見出し→英語キー行→データ）のCSV/Excelを、
-    英語キー行を正式ヘッダにして、その2行下からデータ始まりに整える。
-    例: ... , display_name, expansion, cardnumber, rarity, pack_name, buy_price, allow_auto_print_label, ...
+    二重ヘッダ（2行見出し→英語キー行→データ）を、
+    英語キー行を正式ヘッダにし、その2行下からデータ始まりに整える。
+    例: display_name, expansion, cardnumber, rarity, pack_name, buy_price, allow_auto_print_label, ...
     """
     try:
-        # 英語キー候補の行を検出（display_name と cardnumber が所定列にいることを条件に緩く判定）
         cand = []
-        for i in range(min(10, len(df))):
+        for i in range(min(12, len(df))):
             row = df.iloc[i].astype(str).tolist()
             if "display_name" in row and "cardnumber" in row:
                 cand.append(i)
         if not cand:
             return df
         hdr = cand[0]
-        # 多くの書式で「英語キー行の2行下からデータ」になっていることが多い
-        start = hdr + 2
+        start = hdr + 2  # 多くの書式で2行下からデータ
         df2 = df.iloc[start:].copy()
-        # 列名に英語キー行を採用
-        cols = df.iloc[hdr].tolist()
-        df2.columns = cols
+        df2.columns = df.iloc[hdr].tolist()
         return df2.reset_index(drop=True)
     except Exception:
         return df
@@ -139,7 +134,6 @@ def load_buylist_any(path_hint: str, sheet_name: str|None) -> pd.DataFrame:
     except Exception:
         xls = pd.ExcelFile(p, engine="openpyxl")
         df0 = pd.read_excel(xls, sheet_name=xls.sheet_names[0], header=None, engine="openpyxl")
-    # Excelでも二重ヘッダの可能性あり
     return _normalize_two_header_layout(df0)
 
 df_raw = load_buylist_any(EXCEL_PATH, SHEET_NAME)
@@ -233,9 +227,6 @@ S_PRICE  = get_col(df_raw, ["buy_price","買取価格"],             IDX_PRICE) 
 S_IMGURL = get_col(df_raw, ["allow_auto_print_label","画像URL"],  IDX_IMGURL) # Q
 
 # ========= データ整形 =========
-def col(df, i, default=""):
-    return df.iloc[:, i] if i < df.shape[1] else pd.Series([default]*len(df))
-
 df = pd.DataFrame({
     "name":    clean_text(S_NAME),
     "pack":    clean_text(S_PACK),
@@ -247,8 +238,6 @@ df = pd.DataFrame({
 })
 df = df[~df["name"].str.match(r"^Unnamed", na=False)]
 df = df[df["name"].str.strip()!=""].reset_index(drop=True)
-
-# 検索用の事前正規化
 df["s"] = df.apply(searchable_row_py, axis=1)
 
 # サムネ列
@@ -313,27 +302,37 @@ def build_payload(df: pd.DataFrame) -> tuple[str,str]:
 CARDS_VER, CARDS_JSON = build_payload(df)
 
 # ========= 見た目（CSS） =========
+# ★ヘッダは常に2段：1段目=ロゴ+右に大きいタイトル、2段目=中央にShop/Login
 base_css = """
 *{box-sizing:border-box}
 :root{
   --bg:#ffffff; --panel:#ffffff; --border:#e5e7eb; --accent:#e11d48;
-  --text:#111111; --muted:#6b7280; --header-h: 72px;
+  --text:#111111; --muted:#6b7280; --header-h: 112px;
 }
 body{ margin:0;color:var(--text);background:var(--bg);font-family:Inter,system-ui,'Noto Sans JP',sans-serif; padding-top: var(--header-h); }
-.bg-deco{display:none}
 header{
   position:fixed;top:0;left:0;right:0;z-index:1000;background:#fff;border-bottom:1px solid var(--border);
   padding:10px 16px; box-shadow:0 2px 10px rgba(0,0,0,.04);
 }
-.header-wrap{max-width:1200px;margin:0 auto;display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:12px;width:100%}
-.brand-left{display:flex;align-items:center;gap:12px;min-width:0;justify-self:start}
-.brand-left img{height:60px;display:block}
-.brand-fallback{font-weight:1000;letter-spacing:.6px;color:#111;font-size:22px}
-.center-ttl{justify-self:center;font-weight:900;white-space:nowrap;font-size:clamp(20px, 3.2vw, 30px); color:#111}
-.actions{display:flex;align-items:center;gap:10px;justify-self:end}
+.header-wrap{
+  max-width:1200px;margin:0 auto;display:grid;gap:8px;width:100%;
+  grid-template-columns:auto 1fr;
+  grid-template-areas:
+    "logo title"
+    "actions actions";
+  align-items:center;
+}
+.brand-left{grid-area:logo;display:flex;align-items:center;gap:12px;min-width:0}
+.brand-left img{height:64px;display:block}
+.center-ttl{
+  grid-area:title; font-weight:1000; white-space:nowrap;
+  font-size:clamp(28px, 4.8vw, 44px); line-height:1.05; color:#111;
+}
+.actions{grid-area:actions;display:flex;align-items:center;gap:10px;justify-content:center}
 .iconbtn{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--border);background:#fff;color:#111;border-radius:12px;padding:9px 12px;text-decoration:none;font-size:13px;transition:transform .12s ease, background .12s ease}
 .iconbtn:hover{background:#f9fafb; transform:translateY(-1px)}
 .iconbtn svg{width:16px;height:16px;display:block;color:#111}
+
 .wrap{max-width:1200px;margin:0 auto;padding:12px 16px}
 .controls{
   display:grid;grid-template-columns:repeat(2, minmax(180px,1fr));
@@ -345,12 +344,14 @@ header{
 #packQ{grid-area:q3}
 #rarityQ{grid-area:q4}
 .controls .btns{ grid-area:acts; display:flex; gap:8px; flex-wrap:wrap }
+
 input.search{background:#fff;border:1px solid var(--border);color:#111;border-radius:12px;padding:11px 12px;font-size:14px;outline:none;min-width:0;transition:box-shadow .12s ease;width:100%}
 input.search::placeholder{color:#9ca3af}
 input.search:focus{ box-shadow:0 0 0 2px rgba(17,24,39,.08) }
 .btn{background:#fff;border:1px solid var(--border);color:#111;border-radius:12px;padding:9px 12px;font-size:13px;cursor:pointer;text-decoration:none;white-space:nowrap;transition:transform .12s ease, background .12s ease}
 .btn:hover{background:#f9fafb; transform:translateY(-1px)}
 .btn.active{outline:2px solid var(--accent)}
+
 .grid{margin:12px 0;width:100%}
 .grid.grid-img{display:grid;grid-template-columns:repeat(4, minmax(0,1fr));gap:12px}
 .grid.grid-list{display:grid;grid-template-columns:repeat(2, minmax(0,1fr));gap:12px}
@@ -369,8 +370,9 @@ input.search:focus{ box-shadow:0 0 0 2px rgba(17,24,39,.08) }
 
 .meta{font-size:11px;color:var(--muted);word-break:break-word}
 .p{margin-top:6px;display:flex;flex-wrap:wrap}
-.mx{font-weight:1000;color:var(--accent);font-size:clamp(16px, 2.4vw, 22px);line-height:1.05;text-shadow:none;word-break:break-word; overflow-wrap:anywhere;font-variant-numeric:tabular-nums;white-space:nowrap;display:inline-block;max-width:100%}
+.mx{font-weight:1000;color:var(--accent);font-size:clamp(16px, 2.4vw, 22px);line-height:1.05;text-shadow:none;white-space:nowrap;display:inline-block;max-width:100%}
 .grid.grid-img .meta{display:none}
+
 nav.simple{display:flex;justify-content:center;align-items:center;margin:14px 0;gap:14px;flex-wrap:wrap}
 nav.simple a{color:#111;background:#fff;border:1px solid var(--border);padding:8px 16px;border-radius:12px;text-decoration:none;white-space:nowrap}
 nav.simple a.disabled{opacity:.45;pointer-events:none}
@@ -382,27 +384,8 @@ nav.simple strong{color:#111;user-select:none}
 .viewer img{max-width:92vw;max-height:92vh;display:block}
 .viewer button.close{position:absolute;top:-12px;right:-12px;background:#fff;border:1px solid var(--border);color:#111;border-radius:999px;width:38px;height:38px;cursor:pointer}
 
-@media (max-width:600px){
-  /* ヘッダー：1段目=ロゴ/アクション、2段目=タイトル（全幅） */
-  header{ padding:8px 10px }
-  .header-wrap{
-    grid-template-columns: auto 1fr;
-    grid-template-rows: auto auto;
-    gap: 6px 10px;
-  }
-  .brand-left{ grid-column:1; grid-row:1; }
-  .brand-left img{ height:44px } /* ロゴ少し小さめ */
-  .actions{ grid-column:2; grid-row:1; justify-self:end }
-  .center-ttl{
-    grid-column:1 / -1;   /* 2列をまたいで全幅 */
-    grid-row:2;
-    text-align:center;
-    white-space:normal;    /* ← これで改行許可、被り防止 */
-    font-size:16px;
-    line-height:1.2;
-  }
-
-  /* 既存のスマホ向け調整はそのまま維持 */
+@media (max-width:680px){
+  :root{ --header-h: 124px; }
   .wrap{ padding:4px }
   .grid.grid-img{ gap:2px }
   .b{padding:6px}
@@ -413,7 +396,7 @@ nav.simple strong{color:#111;user-select:none}
   nav.simple a{padding:6px 10px; font-size:12px; display:inline-flex}
   nav.simple strong{font-size:12px}
 }
-
+small.note{color:var(--muted)}
 """
 
 # ========= JS（画像ON時は「名前＋型番＋価格のみ」） =========
@@ -421,7 +404,7 @@ base_js = r"""
 (function(){
   const header = document.querySelector('header');
   const setHeaderH = () => {
-    const h = header?.offsetHeight || 88;
+    const h = header?.offsetHeight || 112;
     document.documentElement.style.setProperty('--header-h', h + 'px');
   };
   setHeaderH();
@@ -443,7 +426,7 @@ base_js = r"""
   const viewerImg = document.getElementById('viewerImg');
   const viewerClose = document.getElementById('viewerClose');
 
-  const isMobile = matchMedia('(max-width: 640px)').matches;
+  const isMobile = matchMedia('(max-width: 680px)').matches;
   const netType = navigator.connection?.effectiveType || '';
   const slowNet = /^(slow-2g|2g|3g)$/i.test(netType);
   const cores = navigator.hardwareConcurrency || 4;
@@ -457,7 +440,7 @@ base_js = r"""
   const eager1 = pick(4, 8, 16);
   const eager2 = pick(8, 16, 32);
 
-  // ★初期表示は必ず画像ON
+  // 初期表示は画像ON
   let showImages;
   let saved = localStorage.getItem('showImages');
   if (saved === 'true')  { localStorage.setItem('showImages','1'); saved = '1'; }
@@ -535,7 +518,7 @@ base_js = r"""
     });
   }
 
-  // ★画像ON時は「カード名＋型番＋価格のみ」
+  // 画像ON時は「カード名＋型番＋価格のみ」
   function cardHTML_img(it){
     const nameEsc = escHtml(it.name||'');
     const full = it.image||'';
@@ -710,6 +693,7 @@ base_js = r"""
 
 # ===== HTML（データはインライン埋め込み） =====
 def html_page(title: str, js_source: str, logo_uri: str, cards_json: str) -> str:
+    # アイコン（SVG）
     shop_svg = "<svg viewBox='0 0 24 24' aria-hidden='true' fill='currentColor'><path d='M3 9.5V8l2.2-3.6c.3-.5.6-.7 1-.7h11.6c.4 0 .7.2.9.6L21 8v1.5c0 1-.8 1.8-1.8 1.8-.9 0-1.6-.6-1.8-1.4-.2.8-.9 1.4-1.8 1.4s-1.6-.6-1.8-1.4c-.2.8-.9 1.4-1.8 1.4s-1.6-.6-1.8-1.4c-.2.8-.9 1.4-1.8 1.4s-1.6-.6-1.8-1.4c-.2.8-.9 1.4-1.8 1.4s-1.6-.6-1.8-1.4c-.2.8-.9 1.4-1.8 1.4C3.8 11.3 3 10.5 3 9.5zM5 12.5h14V20c0 .6-.4 1-1 1H6c-.6 0-1-.4-1-1v-7.5zm4 1.5v5h6v-5H9zM6.3 5.2 5 7.5h14l-1.3-2.3H6.3z'/></svg>"
     login_svg= "<svg viewBox='0 0 24 24' aria-hidden='true' fill='currentColor'><path d='M12 12a5 5 0 1 0-5-5 5 5 0 0 0 5 5zm0 2c-4.418 0-8 2.239-8 5v2h16v-2c0-2.761-3.582-5-8-5z'/></svg>"
 
@@ -717,13 +701,12 @@ def html_page(title: str, js_source: str, logo_uri: str, cards_json: str) -> str
     parts.append("<!doctype html><html lang='ja'><head><meta charset='utf-8'>")
     parts.append("<meta name='viewport' content='width=device-width,initial-scale=1'>")
     parts.append("<style>"); parts.append(base_css); parts.append("</style></head><body>")
-    parts.append("<div class='bg-deco' aria-hidden='true'></div>")
     parts.append("<header><div class='header-wrap'>")
     parts.append("<div class='brand-left'>")
     if logo_uri:
-        parts.append(f"<!-- LOGO embedded -->\n<img src='{logo_uri}' alt='Shop Logo'>")
+        parts.append(f"<img src='{logo_uri}' alt='Shop Logo'>")
     else:
-        parts.append("<div class='brand-fallback'>YOUR SHOP</div>")
+        parts.append("<div class='brand-fallback' aria-label='Shop Logo'>YOUR SHOP</div>")
     parts.append("</div>")
     parts.append(f"<div class='center-ttl'>{html_mod.escape(title)}</div>")
     parts.append("<div class='actions'>")
