@@ -1,0 +1,104 @@
+name: Build & Publish buylist
+
+on:
+  # 手動実行ボタン（Actions から Run workflow）
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Rebuild even if no upstream file changed"
+        required: false
+        default: "false"
+
+  # 定期実行（例：30分おき）
+  schedule:
+    - cron: '*/30 * * * *'
+
+  # （任意）外部サービスからの通知で起動したい場合
+  repository_dispatch:
+    types: [pos-updated]
+
+permissions:
+  contents: write   # docs/ にコミットするために必要
+
+# 同時に2本走らないように（新しい方を優先）
+concurrency:
+  group: buylist-publish
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # 空コミット検知のため履歴を持っておく
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas openpyxl pillow requests
+
+      # === データ取得：URLがあればPOSからCSV/Excelをダウンロード ===
+      # 例）Secrets に POS_FILE_URL（直リンク or API）、必要なら POS_AUTH_HEADER（Bearer トークン等）
+      - name: Fetch buylist from POS (optional)
+        id: fetch
+        env:
+          POS_FILE_URL:    ${{ secrets.POS_FILE_URL }}
+          POS_AUTH_HEADER: ${{ secrets.POS_AUTH_HEADER }}
+        run: |
+          set -eux
+          mkdir -p data
+          if [ -n "${POS_FILE_URL:-}" ]; then
+            if [ -n "${POS_AUTH_HEADER:-}" ]; then
+              curl -fL -H "${POS_AUTH_HEADER}" "$POS_FILE_URL" -o data/buylist.xlsx \
+              || curl -fL -H "${POS_AUTH_HEADER}" "$POS_FILE_URL" -o data/buylist.csv || true
+            else
+              curl -fL "$POS_FILE_URL" -o data/buylist.xlsx \
+              || curl -fL "$POS_FILE_URL" -o data/buylist.csv || true
+            fi
+            echo "downloaded=$(ls -1 data | wc -l)" >> $GITHUB_OUTPUT
+          else
+            echo "No POS_FILE_URL configured; using repository file(s) if present."
+            echo "downloaded=0" >> $GITHUB_OUTPUT
+          fi
+          ls -l data || true
+
+      - name: Build static site (run your gen_buylist.py)
+        env:
+          OUT_DIR: docs
+          PER_PAGE: ${{ vars.PER_PAGE || '80' }}      # リポジトリ Variables で上書き可
+          BUILD_THUMBS: ${{ vars.BUILD_THUMBS || '0' }}  # サムネ生成 0/1
+        run: |
+          set -eux
+          # 優先順: 取ってきたファイル > リポジトリ同梱のファイル
+          INPUT=""
+          for p in data/buylist.xlsx buylist.xlsx data/buylist.csv buylist.csv; do
+            if [ -f "$p" ]; then INPUT="$p"; break; fi
+          done
+          if [ -n "$INPUT" ]; then
+            python gen_buylist.py "$INPUT"
+          else
+            # 引数なし→あなたのスクリプトの自動検出に任せる
+            python gen_buylist.py
+          fi
+
+      - name: Commit & push docs
+        run: |
+          set -eux
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name  "github-actions[bot]"
+          git add -A docs
+          if git diff --cached --quiet; then
+            echo "No changes in docs/"
+          else
+            git commit -m "update buylist: $(date -u +'%Y-%m-%d %H:%M:%S')"
+            git push
+          fi
