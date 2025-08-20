@@ -1,4 +1,4 @@
-name: Build & Publish buylist (POS → Pages)
+name: Build & Publish buylist (Self-hosted Runner)
 
 on:
   workflow_dispatch: {}
@@ -14,7 +14,8 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # ← 自前ランナーに切替（config時に --labels local を付けた前提）
+    runs-on: [self-hosted, local]
 
     steps:
       - name: Checkout
@@ -26,148 +27,160 @@ jobs:
           python-version: '3.11'
 
       - name: Install deps
+        shell: pwsh
         run: |
           python -m pip install --upgrade pip
           pip install pandas openpyxl pillow requests
 
-      # ===== POS から取得（URL/Cookie をサニタイズ、403対策の追加ヘッダ、デバッグ出力付き） =====
-      - name: Fetch from POS (robust + sanitize + debug)
+      # ===== POS から取得（URL/Cookie をサニタイズ、403対策の追加ヘッダ、デバッグ保存） =====
+      - name: Fetch from POS (pwsh, robust + sanitize + debug)
         id: fetch
         env:
-          POS_FILE_URL:       ${{ secrets.POS_FILE_URL }}        # 例: https://pos.mycalinks.com/api/... （最終URLを1行で）
-          POS_COOKIE:         ${{ secrets.POS_COOKIE }}          # DevTools→Network の Cookie 全体（1行）
-          POS_AUTH_HEADER:    ${{ secrets.POS_AUTH_HEADER }}     # 任意: Authorization: Bearer xxxxx
-          POS_X_CSRF_HEADER:  ${{ secrets.POS_X_CSRF_HEADER }}   # 任意: x-csrf-token: yyy
-        shell: bash
+          POS_FILE_URL:       ${{ secrets.POS_FILE_URL }}        # 最終URLを1行で
+          POS_COOKIE:         ${{ secrets.POS_COOKIE }}          # DevTools→NetworkのCookie全体（1行）
+          POS_AUTH_HEADER:    ${{ secrets.POS_AUTH_HEADER }}     # 任意: 例 "Authorization: Bearer xxxxx"
+          POS_X_CSRF_HEADER:  ${{ secrets.POS_X_CSRF_HEADER }}   # 任意: 例 "x-csrf-token: yyy"
+        shell: pwsh
         run: |
-          set -eux
-          mkdir -p data
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path data | Out-Null
 
-          # --- 1) URL/Cookie をサニタイズ（改行/空白/外側の引用符/Windowsの ^ を除去） ---
-          URL_RAW="${POS_FILE_URL-}"
-          URL="$(printf '%s' "$URL_RAW" | tr -d '\r\n')"
-          URL="$(printf '%s' "$URL" | sed -e 's/^[[:space:]]\+//' -e 's/[[:space:]]\+$//')"
-          URL="${URL%\"}"; URL="${URL#\"}"; URL="${URL%\'}"; URL="${URL#\'}"
-          URL="$(printf '%s' "$URL" | sed -e 's/\^&/\&/g' -e 's/\^//g')"
+          # --- Sanitize URL/Cookie（改行/外側のクォート/Windowsの ^ を除去） ---
+          $url = ($env:POS_FILE_URL   ?? "") -replace "`r|`n",""
+          $url = $url.Trim('"').Trim("'").Trim()
+          $url = $url -replace '\^&','&' -replace '\^',''
+          if ($url -notmatch '^https?://') { throw "POS_FILE_URL が不正（http/httpsで始まっていない）" }
 
-          COOKIE="$(printf '%s' "${POS_COOKIE-}" | tr -d '\r\n')"
+          $cookie = ($env:POS_COOKIE ?? "") -replace "`r|`n",""
 
-          if ! printf '%s' "$URL" | grep -Eq '^https?://'; then
-            echo "::error::POS_FILE_URL が不正です（http/https で始まっていません）"; exit 1
-          fi
+          # --- 秘密をマスク ---
+          Write-Output "::add-mask::$url"
+          if ($cookie)            { Write-Output "::add-mask::$cookie" }
+          if ($env:POS_AUTH_HEADER)   { Write-Output "::add-mask::$($env:POS_AUTH_HEADER)" }
+          if ($env:POS_X_CSRF_HEADER) { Write-Output "::add-mask::$($env:POS_X_CSRF_HEADER)" }
 
-          # --- 2) マスク（秘密をログに出さない） ---
-          echo "::add-mask::$URL"
-          echo "::add-mask::$COOKIE"
-          [ -n "${POS_AUTH_HEADER-}" ]   && echo "::add-mask::${POS_AUTH_HEADER}"
-          [ -n "${POS_X_CSRF_HEADER-}" ] && echo "::add-mask::${POS_X_CSRF_HEADER}"
+          # --- ブラウザっぽいヘッダ ---
+          $headers = @{
+            "User-Agent"         = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36"
+            "Accept"             = "*/*"
+            "Accept-Language"    = "ja,en-US;q=0.9,en;q=0.8"
+            "Content-Type"       = "application/json"
+            "Referer"            = "https://pos.mycalinks.com/auth/item?genreId=137"
+            "Origin"             = "https://pos.mycalinks.com"
+            "Sec-Fetch-Dest"     = "empty"
+            "Sec-Fetch-Mode"     = "cors"
+            "Sec-Fetch-Site"     = "same-origin"
+            "sec-ch-ua"          = 'Not;A=Brand";v="99", "Google Chrome";v="139", "Chromium";v="139"'
+            "sec-ch-ua-mobile"   = "?0"
+            "sec-ch-ua-platform" = "Windows"
+            "X-Requested-With"   = "XMLHttpRequest"
+          }
+          if ($cookie) {
+            $headers["Cookie"] = $cookie
+          }
+          if ($env:POS_AUTH_HEADER) {
+            $k,$v = $env:POS_AUTH_HEADER.Split(":",2); if ($v) { $headers[$k.Trim()] = $v.Trim() }
+          }
+          if ($env:POS_X_CSRF_HEADER) {
+            $k,$v = $env:POS_X_CSRF_HEADER.Split(":",2); if ($v) { $headers[$k.Trim()] = $v.Trim() }
+          }
 
-          # --- 3) ブラウザっぽいヘッダを積む ---
-          UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36"
-          H=()
-          H+=(-H "User-Agent: ${UA}")
-          H+=(-H "Accept: */*")
-          H+=(-H "Accept-Language: ja,en-US;q=0.9,en;q=0.8")
-          H+=(-H "Content-Type: application/json")
-          H+=(-H "Referer: https://pos.mycalinks.com/auth/item?genreId=137")
-          H+=(-H "Origin: https://pos.mycalinks.com")
-          H+=(-H "Sec-Fetch-Dest: empty")
-          H+=(-H "Sec-Fetch-Mode: cors")
-          H+=(-H "Sec-Fetch-Site: same-origin")
-          H+=(-H 'sec-ch-ua: "Not;A=Brand";v="99", "Google Chrome";v="139", "Chromium";v="139"')
-          H+=(-H "sec-ch-ua-mobile: ?0")
-          H+=(-H 'sec-ch-ua-platform: "Windows"')
-          H+=(-H "X-Requested-With: XMLHttpRequest")
-          [ -n "${COOKIE}" ]              && H+=(-H "Cookie: ${COOKIE}")
-          [ -n "${POS_AUTH_HEADER-}" ]    && H+=(-H "${POS_AUTH_HEADER}")
-          [ -n "${POS_X_CSRF_HEADER-}" ]  && H+=(-H "${POS_X_CSRF_HEADER}")
+          # --- 取得：成功/失敗でも headers/body を保存 ---
+          $code = 0
+          try {
+            $resp = Invoke-WebRequest -Uri $url -Headers $headers -Method GET -MaximumRedirection 5 -ErrorAction Stop -OutFile data/raw.bin
+            $code = $resp.StatusCode
+            $resp.Headers.GetEnumerator() | ForEach-Object { "$($_.Key): $($_.Value)" } | Set-Content -Encoding ASCII data/headers.txt
+          } catch {
+            if ($_.Exception.Response) {
+              $code = $_.Exception.Response.StatusCode.value__
+              $_.Exception.Response.Headers.GetEnumerator() | ForEach-Object { "$($_.Key): $($_.Value)" } | Set-Content -Encoding ASCII data/headers.txt
+              Copy-Item -Force data/raw.bin data/error_body.bin -ErrorAction SilentlyContinue
+            } else { throw }
+          }
 
-          # --- 4) 取得：HTTPコード/ヘッダ/本文を保存して診断しやすく ---
-          code=$(curl -g -sS -w "%{http_code}" -D data/headers.txt "${H[@]}" "$URL" -o data/raw.bin || true)
-          echo "HTTP $code"
-          head -n 50 data/headers.txt || true
+          "HTTP $code" | Write-Host
+          Get-Content data/headers.txt -TotalCount 50 -EA SilentlyContinue | Write-Host
 
-          if [ "$code" != "200" ]; then
-            file "data/raw.bin" || true
-            cp data/raw.bin data/error_body.bin
-            echo "::warning::非200レスポンス（$code）。error_body.bin と headers.txt を参照してください。403ならCookie期限切れ/WAFの可能性。"
-            exit 1
-          fi
+          if ($code -ne 200) {
+            throw "HTTP $code（Cookie期限切れ/WAFの可能性）。headers.txt / error_body.bin を確認。"
+          }
 
-          # --- 5) Content-Type で保存名を振り分け ---
-          ctype="$(grep -i '^content-type:' data/headers.txt | tail -1 | sed -E 's/^[^:]+:\s*//I' | tr '[:upper:]' '[:lower:]' | cut -d';' -f1 || true)"
-          echo "Detected Content-Type: ${ctype:-unknown}"
+          # --- Content-Type で保存名を振り分け ---
+          $ctype = (Get-Content data/headers.txt | Select-String -Pattern '^content-type:' -SimpleMatch -CaseSensitive:$false | Select-Object -Last 1).ToString()
+          $ctype = ($ctype -replace '^[^:]+:\s*','').ToLower().Split(';')[0]
+          if ($ctype -match 'application/json') {
+            Move-Item -Force data/raw.bin data/items.json
+          } elseif ($ctype -match 'application/(vnd\.openxmlformats\-officedocument\.spreadsheetml\.sheet|octet-stream)') {
+            Move-Item -Force data/raw.bin data/buylist.xlsx
+          } elseif ($ctype -match 'text/csv|application/csv') {
+            Move-Item -Force data/raw.bin data/buylist.csv
+          } else {
+            # 先頭1byteでJSONっぽさを推定
+            $first = [System.Text.Encoding]::ASCII.GetString([System.IO.File]::ReadAllBytes("data/raw.bin"),0,1)
+            if ($first -eq '{') { Move-Item -Force data/raw.bin data/items.json } else { Move-Item -Force data/raw.bin data/buylist.xlsx }
+          }
 
-          if echo "$ctype" | grep -q 'application/json'; then
-            mv data/raw.bin data/items.json
-          elif echo "$ctype" | grep -Eq 'application/(vnd\.openxmlformats-officedocument\.spreadsheetml\.sheet|octet-stream)'; then
-            mv data/raw.bin data/buylist.xlsx
-          elif echo "$ctype" | grep -Eq 'text/csv|application/csv'; then
-            mv data/raw.bin data/buylist.csv
-          else
-            if head -c 1 data/raw.bin | grep -q '{'; then
-              mv data/raw.bin data/items.json
-            else
-              mv data/raw.bin data/buylist.xlsx
-            fi
-          fi
+          Get-ChildItem data
 
-          ls -l data
-
-      # ===== JSON だった場合は CSV に変換（汎用フラット） =====
+      # ===== JSON だった場合は CSV に変換（pwsh で一時スクリプトを作る方式） =====
       - name: Convert JSON to CSV (generic)
-        if: hashFiles('data/items.json') != ''
-        shell: bash
+        if: ${{ hashFiles('data/items.json') != '' }}
+        shell: pwsh
         run: |
-          python - <<'PY'
+          $code = @'
           import json, pandas as pd
           from pandas import json_normalize
           import pathlib
           p = pathlib.Path("data/items.json")
-          data = json.load(p.open())
-
+          data = json.load(p.open(encoding="utf-8"))
           if isinstance(data, dict):
-            for key in ("items","data","products","result","value"):
-              if key in data and isinstance(data[key], list):
-                data = data[key]; break
+              for key in ("items","data","products","result","value"):
+                  if key in data and isinstance(data[key], list):
+                      data = data[key]; break
           if not isinstance(data, list):
-            data = [data]
-
+              data = [data]
           df = json_normalize(data, sep=".")
           df.to_csv("data/buylist.csv", index=False, encoding="utf-8")
           print(f"Wrote data/buylist.csv rows={len(df)} cols={len(df.columns)}")
-          PY
-          ls -l data
+          '@
+          $code | Set-Content -Encoding UTF8 .\convert_json_to_csv.py
+          python .\convert_json_to_csv.py
+          Get-ChildItem data
 
       # ===== 静的ページ生成（あなたの gen_buylist.py を使用） =====
       - name: Build static pages
+        shell: pwsh
         env:
           OUT_DIR: docs
           PER_PAGE: "80"
           BUILD_THUMBS: "0"
-        shell: bash
         run: |
-          set -eux
-          INPUT=""
-          for p in data/buylist.xlsx data/buylist.csv buylist.xlsx buylist.csv; do
-            if [ -f "$p" ]; then INPUT="$p"; break; fi
-          done
-          if [ -z "$INPUT" ]; then
-            echo "::error::入力データがありません（POS取得失敗 & リポジトリにも無い）"; exit 1
-          fi
-          python gen_buylist.py "$INPUT"
+          $input = @("data\buylist.xlsx","data\buylist.csv","buylist.xlsx","buylist.csv") | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $input) { throw "入力データがありません（POS取得失敗 & リポジトリにも無い）" }
+          python gen_buylist.py $input
 
       # ===== 公開用 docs/ をコミット =====
       - name: Commit & push docs
-        shell: bash
+        shell: pwsh
         run: |
-          set -eux
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add -A docs
-          if git diff --cached --quiet; then
-            echo "No changes in docs/"
-          else
+          if (git diff --cached --quiet) {
+            Write-Host "No changes in docs/"
+          } else {
             git commit -m "update buylist (auto)"
             git push
-          fi
+          }
+
+      # ===== 失敗時でもヘッダ/本文を拾えるように =====
+      - name: Upload debug artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pos-debug
+          path: |
+            data/headers.txt
+            data/error_body.bin
