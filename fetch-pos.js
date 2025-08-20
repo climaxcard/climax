@@ -1,4 +1,4 @@
-// fetch-pos.debug.js
+// fetch-pos.js（堅牢ログイン版）
 const { chromium, devices } = require('playwright');
 const fs = require('fs');
 const path = require('path');
@@ -8,125 +8,183 @@ fs.mkdirSync(DEBUG_DIR, { recursive: true });
 
 function mask(s){ if(!s) return '(missing)'; return `(len:${String(s).length})`; }
 
+async function tryLogin(page, email, password, base) {
+  // 候補URL（順にトライ）
+  const urls = [
+    `${base}/auth/login`,
+    `${base}/auth/signin`,
+    `${base}/auth`,
+    `${base}/login`,
+    `${base}/signin`
+  ];
+
+  // 候補セレクタ
+  const emailSels = [
+    'input[type="email"]',
+    'input[name="email"]',
+    'input[autocomplete="username"]',
+    'input[placeholder*="メール"]',
+    'input[placeholder*="email" i]'
+  ];
+  const passSels = [
+    'input[type="password"]',
+    'input[name="password"]',
+    'input[autocomplete="current-password"]',
+    'input[placeholder*="パスワード"]',
+    'input[placeholder*="password" i]'
+  ];
+  const submitSels = [
+    'button[type="submit"]',
+    'button:has-text("ログイン")',
+    'button:has-text("Sign in")',
+    'button:has-text("Sign In")',
+    'input[type="submit"]'
+  ];
+
+  for (const url of urls) {
+    try {
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+      await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(()=>{});
+
+      // 直接ページ内で探す
+      for (const eSel of emailSels) {
+        const emailBox = await page.$(eSel);
+        if (!emailBox) continue;
+
+        // パス欄も探す
+        let passBox = null;
+        for (const pSel of passSels) {
+          passBox = await page.$(pSel);
+          if (passBox) break;
+        }
+        if (!passBox) continue;
+
+        await emailBox.fill(email);
+        await passBox.fill(password);
+
+        // 送信
+        let clicked = false;
+        for (const sSel of submitSels) {
+          const btn = await page.$(sSel);
+          if (btn) {
+            await Promise.all([
+              page.waitForNavigation({ waitUntil: 'networkidle', timeout: 30000 }).catch(()=>{}),
+              btn.click()
+            ]);
+            clicked = true;
+            break;
+          }
+        }
+        if (!clicked) {
+          // Enter送信
+          await passBox.press('Enter');
+          await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(()=>{});
+        }
+
+        // ログイン判定：/auth/ 直下ダッシュボード等に遷移していればOKにする
+        const cur = page.url();
+        if (!/\/auth\/?(login|signin)?$/i.test(new URL(cur).pathname)) {
+          return true;
+        }
+      }
+
+      // フォームがモーダル/別DOMの場合に備えてボタン押してみる
+      const openBtn = await page.$('button:has-text("ログイン")');
+      if (openBtn) {
+        await openBtn.click().catch(()=>{});
+        await page.waitForTimeout(500);
+        // 再度探す
+        for (const eSel of emailSels) {
+          const emailBox = await page.$(eSel);
+          if (!emailBox) continue;
+          let passBox = null;
+          for (const pSel of passSels) {
+            passBox = await page.$(pSel);
+            if (passBox) break;
+          }
+          if (!passBox) continue;
+
+          await emailBox.fill(email);
+          await passBox.fill(password);
+          const btn = await page.$('button[type="submit"], button:has-text("ログイン"), button:has-text("Sign in")');
+          if (btn) {
+            await Promise.all([
+              page.waitForNavigation({ waitUntil: 'networkidle', timeout: 30000 }).catch(()=>{}),
+              btn.click()
+            ]);
+          } else {
+            await passBox.press('Enter');
+            await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(()=>{});
+          }
+          const cur = page.url();
+          if (!/\/auth\/?(login|signin)?$/i.test(new URL(cur).pathname)) {
+            return true;
+          }
+        }
+      }
+
+    } catch (e) {
+      // 次のURL候補へ
+    }
+  }
+
+  // 失敗時スクショ
+  await page.screenshot({ path: path.join(DEBUG_DIR, 'after-login.png'), fullPage: true });
+  return false;
+}
+
 async function main() {
-  const env = {
-    POS_EMAIL: process.env.POS_EMAIL,
-    POS_PASSWORD: process.env.POS_PASSWORD,
-    GAS_WEBHOOK_URL: process.env.GAS_WEBHOOK_URL,
-    GAS_SHARED_SECRET: process.env.GAS_SHARED_SECRET,
-    GENRE_ID: process.env.GENRE_ID || '137',
-    POS_BASE: process.env.POS_BASE || 'https://pos.mycalinks.com',
-  };
+  const {
+    POS_EMAIL,
+    POS_PASSWORD,
+    GAS_WEBHOOK_URL,
+    GAS_SHARED_SECRET,
+    GENRE_ID = '137',
+    POS_BASE = 'https://pos.mycalinks.com'
+  } = process.env;
 
   console.log('[ENV] POS_EMAIL=%s POS_PASSWORD=%s GAS_WEBHOOK_URL=%s GAS_SHARED_SECRET=%s GENRE_ID=%s POS_BASE=%s',
-    mask(env.POS_EMAIL), mask(env.POS_PASSWORD), mask(env.GAS_WEBHOOK_URL), mask(env.GAS_SHARED_SECRET),
-    env.GENRE_ID, env.POS_BASE
-  );
-
-  let exitCode = 0;
+    mask(POS_EMAIL), mask(POS_PASSWORD), mask(GAS_WEBHOOK_URL), mask(GAS_SHARED_SECRET), GENRE_ID, POS_BASE);
 
   const browser = await chromium.launch({ headless: true });
-  const ctx = await browser.newContext({
-    userAgent: devices['Desktop Chrome'].userAgent,
-    locale: 'ja-JP',
-    recordHar: { path: path.join(DEBUG_DIR, 'network.har'), content: 'embed' }
-  });
+  const ctx = await browser.newContext({ userAgent: devices['Desktop Chrome'].userAgent, locale: 'ja-JP' });
   const page = await ctx.newPage();
 
-  page.on('console', m => console.log('[BROWSER]', m.type(), m.text()));
-  page.on('requestfailed', r => console.warn('[REQ-FAILED]', r.method(), r.url(), r.failure()?.errorText));
-  page.on('response', async r => { if (r.status() >= 400) console.warn('[RES-ERROR]', r.status(), r.url()); });
-
   try {
-    // === 1) ログインページへ ===
-    console.log('[STEP] goto login');
-    await page.goto(`${env.POS_BASE}/auth/login`, { waitUntil: 'domcontentloaded', timeout: 60000 })
-      .catch(async () => { await page.goto(`${env.POS_BASE}/auth`, { waitUntil: 'domcontentloaded', timeout: 60000 }); });
-
-    // 3通りの方法でログイン試行
-    let loggedIn = false;
-
-    // A) 直接フォームに email/password がある場合
-    try {
-      const emailSel = 'input[type="email"], input[name="email"], input[autocomplete="username"]';
-      const passSel  = 'input[type="password"], input[name="password"], input[autocomplete="current-password"]';
-      await page.waitForSelector(emailSel, { timeout: 7000 });
-      await page.fill(emailSel, env.POS_EMAIL);
-      await page.fill(passSel, env.POS_PASSWORD);
-      const loginBtn = 'button[type="submit"], button:has-text("ログイン"), button:has-text("Sign in"), button:has-text("Sign In")';
-      await Promise.all([
-        page.waitForNavigation({ waitUntil: 'networkidle', timeout: 30000 }).catch(()=>{}),
-        page.click(loginBtn)
-      ]);
-      loggedIn = true;
-    } catch {}
-
-    // B) 画面に「ログイン」リンク/ボタンがあって、そこからフォームが出るタイプ
-    if (!loggedIn) {
-      try {
-        const openBtn = page.getByRole ? page.getByRole('button', { name: /ログイン|sign ?in/i }) : null;
-        if (openBtn) { await openBtn.click().catch(()=>{}); }
-        const emailSel = 'input[type="email"], input[name="email"], input[autocomplete="username"]';
-        const passSel  = 'input[type="password"], input[name="password"], input[autocomplete="current-password"]';
-        await page.waitForSelector(emailSel, { timeout: 7000 });
-        await page.fill(emailSel, env.POS_EMAIL);
-        await page.fill(passSel, env.POS_PASSWORD);
-        await Promise.all([
-          page.waitForNavigation({ waitUntil: 'networkidle', timeout: 30000 }).catch(()=>{}),
-          page.click('button[type="submit"], button:has-text("ログイン"), button:has-text("Sign in")')
-        ]);
-        loggedIn = true;
-      } catch {}
+    // 1) ログイン
+    console.log('[STEP] login…');
+    const ok = await tryLogin(page, POS_EMAIL, POS_PASSWORD, POS_BASE);
+    if (!ok) {
+      console.error('Login failed: unable to locate email/password fields or submit.');
+      process.exit(1);
     }
+    console.log('[INFO] logged in. url=', page.url());
 
-    // C) Next.js（NextAuth等）でフォームがモーダルにあるケース
-    if (!loggedIn) {
-      try {
-        // ラベルから探す（アクセシビリティ対応サイト想定）
-        const emailLabel = page.getByLabel ? page.getByLabel(/メール|email/i) : null;
-        const passLabel  = page.getByLabel ? page.getByLabel(/パスワード|password/i) : null;
-        if (emailLabel && passLabel) {
-          await emailLabel.fill(env.POS_EMAIL);
-          await passLabel.fill(env.POS_PASSWORD);
-          await Promise.all([
-            page.waitForNavigation({ waitUntil: 'networkidle', timeout: 30000 }).catch(()=>{}),
-            page.getByRole('button', { name: /ログイン|sign ?in/i }).click()
-          ]);
-          loggedIn = true;
-        }
-      } catch {}
-    }
-
-    await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(()=>{});
-    await page.screenshot({ path: path.join(DEBUG_DIR, 'after-login.png'), fullPage: true });
-    console.log('[INFO] after login url=', page.url());
-
-    // === 2) 対象ページへ ===
-    const targetUrl = `${env.POS_BASE}/auth/item?genreId=${env.GENRE_ID}`;
+    // 2) 対象ページへ
+    const targetUrl = `${POS_BASE}/auth/item?genreId=${GENRE_ID}`;
     console.log('[STEP] goto target', targetUrl);
     await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
     await page.waitForLoadState('networkidle', { timeout: 20000 }).catch(()=>{});
     await page.screenshot({ path: path.join(DEBUG_DIR, 'target-page.png'), fullPage: true });
 
-    // === 3) JSON API レスポンス捕捉 ===
+    // 3) JSON API レスポンス待ち（/api & JSON & 200 & genreId）
     console.log('[STEP] waitForResponse(JSON API)');
     const apiResp = await page.waitForResponse(res => {
       try {
         const url = res.url();
         const ct  = (res.headers()['content-type'] || '').toLowerCase();
-        const ok  = res.status() === 200;
-        const same = url.startsWith(env.POS_BASE);
-        const json = ct.includes('application/json');
-        return ok && same && json && (url.includes('/api') || url.includes('genreId='));
+        return res.status() === 200
+          && ct.includes('application/json')
+          && url.includes('/api')
+          && (url.includes('genreId=') || url.includes(`/genreId=${GENRE_ID}`));
       } catch { return false; }
     }, { timeout: 60000 });
 
-    const apiUrl = apiResp.url();
     const data = await apiResp.json();
+    const apiUrl = apiResp.url();
     console.log('[INFO] captured API:', apiUrl);
-    fs.writeFileSync(path.join(DEBUG_DIR, 'api-sample.json'), JSON.stringify(data, null, 2));
 
-    // === 4) 配列抽出 ===
+    // 4) 配列抽出
     let arr = [];
     if (Array.isArray(data)) arr = data;
     else if (data && typeof data === 'object') {
@@ -140,35 +198,24 @@ async function main() {
         }
       }
     }
-
     if (!arr.length) {
-      console.error('[ERROR] No array found in API JSON. head=', JSON.stringify(data).slice(0,300));
-      await page.screenshot({ path: path.join(DEBUG_DIR, 'no-array.png'), fullPage: true });
-      exitCode = 2;
-    } else {
-      console.log('[INFO] items length =', arr.length, 'keys =', Object.keys(arr[0]||{}).slice(0,20));
-      fs.writeFileSync(path.join(DEBUG_DIR, 'items-sample.json'), JSON.stringify(arr.slice(0,3), null, 2));
-
-      // === 5) GASへPOST ===
-      console.log('[STEP] POST to GAS');
-      const res = await page.request.post(env.GAS_WEBHOOK_URL, {
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${env.GAS_SHARED_SECRET}` },
-        data: { items: arr }
-      });
-      const txt = await res.text();
-      console.log('GAS response:', txt);
-      if (!txt.includes('"ok":true')) exitCode = 3;
+      console.error('No array found in API JSON. head=', JSON.stringify(data).slice(0,300));
+      process.exit(2);
     }
 
-  } catch (err) {
-    console.error('[FATAL]', err);
-    exitCode = 1;
-    try { await page.screenshot({ path: path.join(DEBUG_DIR, 'fatal.png'), fullPage: true }); } catch {}
+    // 5) GASへPOST
+    const res = await page.request.post(GAS_WEBHOOK_URL, {
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${GAS_SHARED_SECRET}` },
+      data: { items: arr }
+    });
+    const txt = await res.text();
+    console.log('GAS response:', txt);
+    if (!txt.includes('"ok":true')) process.exit(3);
+
   } finally {
     await ctx.close();
     await browser.close();
-    process.exit(exitCode);
   }
 }
 
-main();
+main().catch(e => { console.error(e); process.exit(1); });
