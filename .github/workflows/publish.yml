@@ -16,9 +16,7 @@ concurrency:
 
 jobs:
   build:
-    # 自前ランナー側で付けたラベルに合わせて調整（例: Windows + local）
     runs-on: [ self-hosted, Windows, local ]
-
     defaults:
       run:
         shell: powershell
@@ -26,6 +24,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          lfs: true   # ← LFS 画像(logo等)の実体を取得
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -194,6 +194,7 @@ jobs:
           OUT_DIR: docs
           PER_PAGE: "80"
           BUILD_THUMBS: "0"
+          LOGO_FILE: assets/logo.png   # ← ロゴパスを明示
         run: |
           $candidates = @("data\buylist.xlsx","data\buylist.csv","buylist.xlsx","buylist.csv")
           $input = $null
