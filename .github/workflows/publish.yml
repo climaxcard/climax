@@ -1,147 +1,69 @@
-name: Build & Publish buylist (POS → Pages)
+- name: Fetch from POS (robust + sanitize)
+  id: fetch
+  env:
+    POS_FILE_URL:       ${{ secrets.POS_FILE_URL }}        # 例: https://pos.mycalinks.com/api/...（最終URL）
+    POS_COOKIE:         ${{ secrets.POS_COOKIE }}          # DevTools→Network の Cookie を丸ごと1行
+    POS_AUTH_HEADER:    ${{ secrets.POS_AUTH_HEADER }}     # 例: Authorization: Bearer xxxxx（任意）
+    POS_X_CSRF_HEADER:  ${{ secrets.POS_X_CSRF_HEADER }}   # 例: x-csrf-token: abc123（任意）
+  shell: bash
+  run: |
+    set -eux
+    mkdir -p data
 
-on:
-  workflow_dispatch: {}        # 手動実行ボタン
-  push:
-    branches: [ main ]         # mainにpushされたら実行（不要なら消してOK）
+    # --- 1) URL/Cookie をサニタイズ（改行/CR・外側の引用符・Windowsの ^ を除去） ---
+    URL_RAW="${POS_FILE_URL-}"
+    URL="$(printf '%s' "$URL_RAW" | tr -d '\r\n')"                 # 改行除去
+    URL="$(printf '%s' "$URL" | sed -e 's/^[[:space:]]\+//' -e 's/[[:space:]]\+$//')"   # 前後空白
+    URL="${URL%\"}"; URL="${URL#\"}"; URL="${URL%\'}"; URL="${URL#\'}"                  # 外側の ' "
+    URL="$(printf '%s' "$URL" | sed -e 's/\^&/\&/g' -e 's/\^//g')"                      # ^& → &、残りの ^ を削除
 
-permissions:
-  contents: write              # docs/ をコミットする権限
+    COOKIE_RAW="${POS_COOKIE-}"
+    COOKIE="$(printf '%s' "$COOKIE_RAW" | tr -d '\r\n')"           # 改行除去（Cookieは1行で）
 
-concurrency:
-  group: buylist-publish
-  cancel-in-progress: true
+    if ! printf '%s' "$URL" | grep -Eq '^https?://'; then
+      echo "::error::POS_FILE_URL が不正です（http/https で始まっていません）。Secrets を確認してください。"
+      exit 1
+    fi
 
-jobs:
-  build:
-    runs-on: ubuntu-latest
+    # 秘匿値をマスク登録（ログに出さない）
+    echo "::add-mask::$URL"
+    echo "::add-mask::$COOKIE"
+    [ -n "${POS_AUTH_HEADER-}" ]    && echo "::add-mask::${POS_AUTH_HEADER}"
+    [ -n "${POS_X_CSRF_HEADER-}" ]  && echo "::add-mask::${POS_X_CSRF_HEADER}"
 
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+    # --- 2) ヘッダ準備（あるものだけ積む） ---
+    UA="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/139 Safari/537.36"
+    H=()
+    H+=(-H "User-Agent: ${UA}")
+    H+=(-H "Accept: */*")
+    H+=(-H "Accept-Language: ja,en-US;q=0.9,en;q=0.8")
+    H+=(-H "Content-Type: application/json")
+    H+=(-H "Referer: https://pos.mycalinks.com/")
+    H+=(-H "Origin: https://pos.mycalinks.com")
+    [ -n "${COOKIE}" ]              && H+=(-H "Cookie: ${COOKIE}")
+    [ -n "${POS_AUTH_HEADER-}" ]    && H+=(-H "${POS_AUTH_HEADER}")
+    [ -n "${POS_X_CSRF_HEADER-}" ]  && H+=(-H "${POS_X_CSRF_HEADER}")
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
+    # --- 3) 取得（Content-Type 判定して保存ファイルを切り替え） ---
+    curl -g -fL -sS -D data/headers.txt "${H[@]}" "$URL" -o data/raw.bin
 
-      - name: Install deps
-        run: |
-          python -m pip install --upgrade pip
-          pip install pandas openpyxl pillow requests
+    # Content-Type を小文字で取得（;以降はカット）
+    ctype="$(grep -i '^content-type:' data/headers.txt | tail -1 | sed -E 's/^[^:]+:\s*//I' | tr '[:upper:]' '[:lower:]' | cut -d';' -f1 || true)"
+    echo "Detected Content-Type: ${ctype:-unknown}"
 
-      # ===== 1) POS から取得（Cookie/Token/CSRF など "あるものだけ" ヘッダに積む） =====
-      - name: Fetch from POS (robust)
-        id: fetch
-        env:
-          POS_FILE_URL:       ${{ secrets.POS_FILE_URL }}        # 例: https://pos.mycalinks.com/api/store/32/item?...（あなたのURL）
-          POS_COOKIE:         ${{ secrets.POS_COOKIE }}          # DevTools でコピーした Cookie 全体
-          POS_AUTH_HEADER:    ${{ secrets.POS_AUTH_HEADER }}     # 例: Authorization: Bearer xxxxx（無ければ未設定でOK）
-          POS_X_CSRF_HEADER:  ${{ secrets.POS_X_CSRF_HEADER }}   # 例: x-csrf-token: abc123（無ければ未設定でOK）
-        shell: bash
-        run: |
-          set -eux
-          mkdir -p data
-          if [ -z "${POS_FILE_URL:-}" ]; then
-            echo "::warning::POS_FILE_URL not set. Will fallback to repo files if any."
-            exit 0
-          fi
+    if echo "$ctype" | grep -q 'application/json'; then
+      mv data/raw.bin data/items.json
+    elif echo "$ctype" | grep -Eq 'application/(vnd\.openxmlformats-officedocument\.spreadsheetml\.sheet|octet-stream)'; then
+      mv data/raw.bin data/buylist.xlsx
+    elif echo "$ctype" | grep -Eq 'text/csv|application/csv'; then
+      mv data/raw.bin data/buylist.csv
+    else
+      # 中身の先頭で最終判定（{ なら JSON、そうでなければ XLSX とみなす）
+      if head -c 1 data/raw.bin | grep -q '{'; then
+        mv data/raw.bin data/items.json
+      else
+        mv data/raw.bin data/buylist.xlsx
+      fi
+    fi
 
-          UA="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/139 Safari/537.36"
-          H=()
-          H+=(-H "User-Agent: ${UA}")
-          H+=(-H "Accept: */*")
-          H+=(-H "Accept-Language: ja,en-US;q=0.9,en;q=0.8")
-          H+=(-H "Content-Type: application/json")
-          H+=(-H "Referer: https://pos.mycalinks.com/")
-          H+=(-H "Origin: https://pos.mycalinks.com")
-          if [ -n "${POS_COOKIE:-}" ];        then H+=(-H "Cookie: ${POS_COOKIE}"); fi
-          if [ -n "${POS_AUTH_HEADER:-}" ];   then H+=(-H "${POS_AUTH_HEADER}"); fi
-          if [ -n "${POS_X_CSRF_HEADER:-}" ]; then H+=(-H "${POS_X_CSRF_HEADER}"); fi
-
-          # ヘッダも保存して Content-Type を判定
-          curl -fL -D data/headers.txt "${H[@]}" "$POS_FILE_URL" -o data/raw.bin
-
-          ctype="$(grep -i '^content-type:' data/headers.txt | tail -1 | tr -d '\r' | awk '{print tolower($2)}' || true)"
-          echo "Detected Content-Type: ${ctype:-unknown}"
-
-          if echo "$ctype" | grep -q 'application/json'; then
-            mv data/raw.bin data/items.json
-          elif echo "$ctype" | grep -qi 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'; then
-            mv data/raw.bin data/buylist.xlsx
-          elif echo "$ctype" | grep -qi 'text/csv\|application/csv'; then
-            mv data/raw.bin data/buylist.csv
-          else
-            # 拡張子や中身で簡易判定（最終手段）
-            if head -c 1 data/raw.bin | grep -q '{'; then
-              mv data/raw.bin data/items.json
-            else
-              # 不明ならそのままxlsxとして扱う（サイト側がoctet-stream返すことがある）
-              mv data/raw.bin data/buylist.xlsx
-            fi
-          fi
-
-          ls -l data
-
-      # ===== 2) JSON だった場合は CSV にフラット変換（汎用） =====
-      - name: Convert JSON to CSV (generic)
-        if: hashFiles('data/items.json') != ''
-        shell: bash
-        run: |
-          python - <<'PY'
-          import json, pandas as pd
-          from pandas import json_normalize
-          import pathlib, sys
-
-          p = pathlib.Path("data/items.json")
-          data = json.load(p.open())
-
-          # ルートがdictなら中の配列キーを推測（items/data/products/result/value）
-          if isinstance(data, dict):
-            for key in ("items","data","products","result","value"):
-              if key in data and isinstance(data[key], list):
-                data = data[key]
-                break
-
-          if not isinstance(data, list):
-            print("JSON root is not a list. Wrapping it.")
-            data = [data]
-
-          df = json_normalize(data, sep=".")
-          df.to_csv("data/buylist.csv", index=False, encoding="utf-8")
-          print(f"Wrote data/buylist.csv rows={len(df)} cols={len(df.columns)}")
-          PY
-          ls -l data
-
-      # ===== 3) 静的ページ生成（あなたの gen_buylist.py をそのまま使用） =====
-      - name: Build static pages
-        env:
-          OUT_DIR: docs
-          PER_PAGE: "80"
-          BUILD_THUMBS: "0"
-        shell: bash
-        run: |
-          set -eux
-          INPUT=""
-          for p in data/buylist.xlsx data/buylist.csv buylist.xlsx buylist.csv; do
-            if [ -f "$p" ]; then INPUT="$p"; break; fi
-          done
-          if [ -z "$INPUT" ]; then
-            echo "::error::入力データがありません（POS取得失敗 & リポジトリにも無い）"; exit 1
-          fi
-          python gen_buylist.py "$INPUT"
-
-      # ===== 4) docs/ をコミット & push =====
-      - name: Commit & push docs
-        shell: bash
-        run: |
-          set -eux
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -A docs
-          if git diff --cached --quiet; then
-            echo "No changes in docs/"
-          else
-            git commit -m "update buylist (auto)"
-            git push
-          fi
+    ls -l data
