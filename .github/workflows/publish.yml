@@ -1,0 +1,62 @@
+name: Build & Publish buylist
+
+on:
+  workflow_dispatch: {}        # 手動実行ボタン
+  push:
+    branches: [ main ]         # mainにpushした時も実行（不要なら消してOK）
+
+permissions:
+  contents: write              # docs/ をコミットする権限
+
+concurrency:
+  group: buylist-publish
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas openpyxl pillow requests
+
+      - name: Build static pages (run gen_buylist.py)
+        env:
+          OUT_DIR: docs
+          PER_PAGE: "80"
+          BUILD_THUMBS: "0"
+        run: |
+          set -eux
+          # 優先順: data/buylist.xlsx -> buylist.xlsx -> data/buylist.csv -> buylist.csv
+          INPUT=""
+          for p in data/buylist.xlsx buylist.xlsx data/buylist.csv buylist.csv; do
+            if [ -f "$p" ]; then INPUT="$p"; break; fi
+          done
+          if [ -n "$INPUT" ]; then
+            python gen_buylist.py "$INPUT"
+          else
+            python gen_buylist.py
+          fi
+
+      - name: Commit & push docs
+        run: |
+          set -eux
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A docs
+          if git diff --cached --quiet; then
+            echo "No changes in docs/"
+          else
+            git commit -m "update buylist (auto)"
+            git push
+          fi
