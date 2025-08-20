@@ -1,13 +1,14 @@
 # -*- coding: utf-8 -*-
 """
-デュエマ買取表 静的ページ生成（完成版）
-- レイアウト：上段 左=店舗ロゴ, 右=大きい「デュエマ買取表」 / 下段 中央=Shop & Login アイコン
-- CSV/Excel 自動対応。二重ヘッダ(日本語→英語キー行→データ)も自動正規化
-- 列は「ヘッダ名優先 → 指定位置フォールバック」で確実にマッピング
-- 画像は軽量WebPサムネ（自家ホスト）/無ければフルを遅延読込。失敗時はフルへ自動フォールバック
-- 画像ON時は「カード名(C)＋型番(F)＋買取価格(O)のみ」を表示
+デュエマ買取表 静的ページ生成（完成版・中央タイトル）
+- ヘッダー 1段目：左=ロゴ / 中央=大きい「デュエマ買取表」 / 右=スペーサ
+- ヘッダー 2段目：中央に Shop / Login
+- CSV/Excel 自動対応（2行見出し→英語キー→データの二重ヘッダも正規化）
+- 列は「ヘッダ名優先 → 位置フォールバック(C/E/F/G/H/O/Q)」
+- 画像URLは Q列（allow_auto_print_label など）最優先、IMAGE() 形式も抽出
+- 画像ON時は「カード名(C)＋型番(F)＋買取価格(O)のみ」表示
 - スマホで型番がめり込まない（バッジ化＋nowrap）
-- データは各HTMLにインライン埋め込み（外部 cards.min.js 依存なし）
+- データはHTMLにインライン埋め込み（外部JS不要）
 """
 
 from pathlib import Path
@@ -223,7 +224,7 @@ S_CODE   = get_col(df_raw, ["cardnumber","カード番号"],           IDX_CODE)
 S_RARITY = get_col(df_raw, ["rarity","レアリティ"],               IDX_RARITY) # G
 S_BOOST  = get_col(df_raw, ["pack_name","封入パック","パック名"],  IDX_BOOST)  # H
 S_PRICE  = get_col(df_raw, ["buy_price","買取価格"],             IDX_PRICE)  # O
-# 実データで画像URLが allow_auto_print_label に入っていたため最優先に
+# 画像URL（実データは allow_auto_print_label が多い）→ Q列相当
 S_IMGURL = get_col(df_raw, ["allow_auto_print_label","画像URL"],  IDX_IMGURL) # Q
 
 # ========= データ整形 =========
@@ -302,12 +303,12 @@ def build_payload(df: pd.DataFrame) -> tuple[str,str]:
 CARDS_VER, CARDS_JSON = build_payload(df)
 
 # ========= 見た目（CSS） =========
-# ★ヘッダは常に2段：1段目=ロゴ+右に大きいタイトル、2段目=中央にShop/Login
+# ヘッダー：1段目=「logo title spacer」(titleは中央) / 2段目=actionsを中央
 base_css = """
 *{box-sizing:border-box}
 :root{
   --bg:#ffffff; --panel:#ffffff; --border:#e5e7eb; --accent:#e11d48;
-  --text:#111111; --muted:#6b7280; --header-h: 112px;
+  --text:#111111; --muted:#6b7280; --header-h: 128px;
 }
 body{ margin:0;color:var(--text);background:var(--bg);font-family:Inter,system-ui,'Noto Sans JP',sans-serif; padding-top: var(--header-h); }
 header{
@@ -316,18 +317,19 @@ header{
 }
 .header-wrap{
   max-width:1200px;margin:0 auto;display:grid;gap:8px;width:100%;
-  grid-template-columns:auto 1fr;
+  grid-template-columns:auto 1fr auto;
   grid-template-areas:
-    "logo title"
-    "actions actions";
+    "logo title spacer"
+    "actions actions actions";
   align-items:center;
 }
 .brand-left{grid-area:logo;display:flex;align-items:center;gap:12px;min-width:0}
 .brand-left img{height:64px;display:block}
 .center-ttl{
-  grid-area:title; font-weight:1000; white-space:nowrap;
-  font-size:clamp(28px, 4.8vw, 44px); line-height:1.05; color:#111;
+  grid-area:title; font-weight:1000; text-align:center;
+  font-size:clamp(28px, 5.2vw, 52px); line-height:1.05; color:#111;
 }
+.right-spacer{grid-area:spacer;}
 .actions{grid-area:actions;display:flex;align-items:center;gap:10px;justify-content:center}
 .iconbtn{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--border);background:#fff;color:#111;border-radius:12px;padding:9px 12px;text-decoration:none;font-size:13px;transition:transform .12s ease, background .12s ease}
 .iconbtn:hover{background:#f9fafb; transform:translateY(-1px)}
@@ -364,7 +366,7 @@ input.search:focus{ box-shadow:0 0 0 2px rgba(17,24,39,.08) }
 .th img{width:100%;height:100%;object-fit:cover;display:block;background:#f3f4f6}
 .b{padding:10px 12px}
 
-/* ★ 型番のめり込み対策：バッジ化＋nowrap、タイトルはflexで折返し最適化 */
+/* 型番のめり込み対策：バッジ化＋nowrap、タイトルはflexで折返し最適化 */
 .n{font-size:14px;font-weight:800;line-height:1.25;margin:0 0 6px;color:#111;display:flex;gap:6px;align-items:baseline;flex-wrap:wrap;word-break:break-word}
 .n .code{margin-left:0;font-weight:700;font-size:12px;color:#374151;background:#f3f4f6;border:1px solid #e5e7eb;border-radius:8px;padding:2px 6px;white-space:nowrap}
 
@@ -384,8 +386,10 @@ nav.simple strong{color:#111;user-select:none}
 .viewer img{max-width:92vw;max-height:92vh;display:block}
 .viewer button.close{position:absolute;top:-12px;right:-12px;background:#fff;border:1px solid var(--border);color:#111;border-radius:999px;width:38px;height:38px;cursor:pointer}
 
-@media (max-width:680px){
-  :root{ --header-h: 124px; }
+@media (max-width:700px){
+  :root{ --header-h: 136px; }
+  .brand-left img{height:56px}
+  .center-ttl{ font-size:clamp(24px, 7vw, 36px) }
   .wrap{ padding:4px }
   .grid.grid-img{ gap:2px }
   .b{padding:6px}
@@ -404,7 +408,7 @@ base_js = r"""
 (function(){
   const header = document.querySelector('header');
   const setHeaderH = () => {
-    const h = header?.offsetHeight || 112;
+    const h = header?.offsetHeight || 128;
     document.documentElement.style.setProperty('--header-h', h + 'px');
   };
   setHeaderH();
@@ -426,7 +430,7 @@ base_js = r"""
   const viewerImg = document.getElementById('viewerImg');
   const viewerClose = document.getElementById('viewerClose');
 
-  const isMobile = matchMedia('(max-width: 680px)').matches;
+  const isMobile = matchMedia('(max-width: 700px)').matches;
   const netType = navigator.connection?.effectiveType || '';
   const slowNet = /^(slow-2g|2g|3g)$/i.test(netType);
   const cores = navigator.hardwareConcurrency || 4;
@@ -709,6 +713,7 @@ def html_page(title: str, js_source: str, logo_uri: str, cards_json: str) -> str
         parts.append("<div class='brand-fallback' aria-label='Shop Logo'>YOUR SHOP</div>")
     parts.append("</div>")
     parts.append(f"<div class='center-ttl'>{html_mod.escape(title)}</div>")
+    parts.append("<div class='right-spacer'></div>")
     parts.append("<div class='actions'>")
     parts.append(f"<a class='iconbtn' href='https://www.climax-card.jp/' target='_blank' rel='noopener'>{shop_svg}<span>Shop</span></a>")
     parts.append(f"<a class='iconbtn' href='https://www.climax-card.jp/member-login' target='_blank' rel='noopener'>{login_svg}<span>Login</span></a>")
@@ -729,7 +734,7 @@ def html_page(title: str, js_source: str, logo_uri: str, cards_json: str) -> str
     parts.append("  <small class='note'>このページ内のデータのみで検索・並び替え・ページングできます。画像クリックで拡大表示。</small>")
     parts.append("</main>")
 
-    # ★ データをインライン埋め込み（外部ファイル不要）
+    # データをインライン埋め込み
     parts.append("<script>")
     parts.append("window.__CARDS__=" + cards_json + ";")
     parts.append("</script>")
