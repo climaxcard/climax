@@ -6,7 +6,7 @@
 - 画像URLは Q列系（allow_auto_print_label 等）最優先。=IMAGE() 抽出にも対応
 - 画像ON時は「カード名＋型番＋買取価格のみ」表示（スマホ最適化：型番はバッジ・nowrap）
 - ロゴは LOGO_FILE 環境変数 or assets/logo.png を最優先で埋め込み（base64）
-- 見出しは 2段ヘッダー（1段目：ロゴ・中央大タイトル、2段目：Shop/Login）。高さはJSで測って被り防止
+- 見出しは 2段ヘッダー（PC: 1行 / SP: 2行）。高さはJSで測って被り防止
 """
 
 from pathlib import Path
@@ -59,17 +59,13 @@ IDX_IMGURL = 16
 THUMB_DIR = OUT_DIR / "assets" / "thumbs"
 THUMB_W = 600
 
-# ---- ロゴ探索（assets/logo.png 最優先。次いで LOGO_FILE 環境変数 → カレント → スクリプト隣） ----
+# ---- ロゴ探索 ----
 def find_logo_path():
     cands = []
-    # 明示指定（環境変数）を先に
     if LOGO_FILE_ENV:
         cands.append(Path(LOGO_FILE_ENV))
-    # 最優先：assets/logo.png（作業ルート基準）
     cands += [Path("assets") / "logo.png"]
-    # カレント直下
     cands += [Path(os.getcwd()) / "logo.png", Path(os.getcwd()) / "logo.png.png"]
-    # スクリプト隣接
     try:
         here = Path(__file__).parent
         cands += [here / "assets" / "logo.png", here / "logo.png", here / "logo.png.png"]
@@ -96,7 +92,6 @@ LOGO_URI = logo_to_data_uri(find_logo_path())
 
 # ========= 入力ファイル 読み込み・正規化（CSV/Excel自動対応） =========
 def _read_csv_auto(path: Path) -> pd.DataFrame:
-    # 文字化け対策：よくある順に試す
     for enc in ("utf-8-sig", "cp932", "utf-8"):
         try:
             return pd.read_csv(path, encoding=enc)
@@ -106,9 +101,7 @@ def _read_csv_auto(path: Path) -> pd.DataFrame:
 
 def _normalize_two_header_layout(df: pd.DataFrame) -> pd.DataFrame:
     """
-    二重ヘッダ（2行見出し→英語キー行→データ）を、
-    英語キー行を正式ヘッダにし、その2行下からデータ始まりに整える。
-    例: display_name, expansion, cardnumber, rarity, pack_name, buy_price, allow_auto_print_label, ...
+    二重ヘッダ（2行見出し→英語キー行→データ）を、英語キー行を正式ヘッダに整える。
     """
     try:
         cand = []
@@ -120,7 +113,7 @@ def _normalize_two_header_layout(df: pd.DataFrame) -> pd.DataFrame:
         if not cand:
             return df
         hdr = cand[0]
-        start = hdr + 2  # 多くの形式で2行下がデータ
+        start = hdr + 2
         df2 = df.iloc[start:].copy()
         df2.columns = df.iloc[hdr].tolist()
         return df2.reset_index(drop=True)
@@ -149,7 +142,6 @@ def load_buylist_any(path_hint: str, sheet_name: str|None) -> pd.DataFrame:
     if p.suffix.lower()==".csv":
         df0 = _read_csv_auto(p)
         return _normalize_two_header_layout(df0)
-    # Excel（openpyxl）
     try:
         if sheet_name:
             df0 = pd.read_excel(p, sheet_name=sheet_name, header=None, engine="openpyxl")
@@ -179,14 +171,6 @@ def to_int_series(s: pd.Series) -> pd.Series:
     return pd.to_numeric(s, errors="coerce").round().astype("Int64")
 
 def detail_to_img(val: str) -> str:
-    """
-    URL抽出:
-      - https://… そのまま
-      - =IMAGE("…") / IMAGE('…') / @IMAGE("…") / 全角＠IMAGE("…")
-      - ="https://…" / 'https://…'
-      - 文中にURLがあれば最初を採用
-      - ?id=slug → cardimage 変換 / 末尾スラッグ → cardimage
-    """
     if not isinstance(val, str):
         return ""
     s = val.strip()
@@ -232,7 +216,7 @@ def searchable_row_py(row: pd.Series) -> str:
     parts = [row.get(k, "") for k in ("name","code","pack","rarity","booster")]
     return normalize_for_search_py(" ".join(map(str, parts)))
 
-# ========= 列アクセス（ヘッダ名優先→位置フォールバック） =========
+# ========= 列アクセス =========
 def get_col(df: pd.DataFrame, names: list[str], fallback_idx: int|None):
     for nm in names:
         if nm in df.columns:
@@ -241,15 +225,13 @@ def get_col(df: pd.DataFrame, names: list[str], fallback_idx: int|None):
         return df.iloc[:, fallback_idx]
     return pd.Series([""]*len(df), index=df.index)
 
-# 英語キー / 日本語名 / 位置フォールバック
-S_NAME   = get_col(df_raw, ["display_name","商品名"],            IDX_NAME)   # C
-S_PACK   = get_col(df_raw, ["expansion","エキスパンション"],      IDX_PACK)   # E
-S_CODE   = get_col(df_raw, ["cardnumber","カード番号"],           IDX_CODE)   # F
-S_RARITY = get_col(df_raw, ["rarity","レアリティ"],               IDX_RARITY) # G
-S_BOOST  = get_col(df_raw, ["pack_name","封入パック","パック名"],  IDX_BOOST)  # H
-S_PRICE  = get_col(df_raw, ["buy_price","買取価格"],             IDX_PRICE)  # O
-# 画像URL（実データは allow_auto_print_label が多い）→ Q列相当
-S_IMGURL = get_col(df_raw, ["allow_auto_print_label","画像URL"],  IDX_IMGURL) # Q
+S_NAME   = get_col(df_raw, ["display_name","商品名"],            IDX_NAME)
+S_PACK   = get_col(df_raw, ["expansion","エキスパンション"],      IDX_PACK)
+S_CODE   = get_col(df_raw, ["cardnumber","カード番号"],           IDX_CODE)
+S_RARITY = get_col(df_raw, ["rarity","レアリティ"],               IDX_RARITY)
+S_BOOST  = get_col(df_raw, ["pack_name","封入パック","パック名"],  IDX_BOOST)
+S_PRICE  = get_col(df_raw, ["buy_price","買取価格"],             IDX_PRICE)
+S_IMGURL = get_col(df_raw, ["allow_auto_print_label","画像URL"],  IDX_IMGURL)
 
 # ========= データ整形 =========
 df = pd.DataFrame({
@@ -261,10 +243,8 @@ df = pd.DataFrame({
     "price":   to_int_series(S_PRICE) if len(S_PRICE) else pd.Series([None]*len(df_raw)),
     "image":   clean_text(S_IMGURL).map(detail_to_img),
 })
-# ゴミ行除去
 df = df[~df["name"].str.match(r"^Unnamed", na=False)]
 df = df[df["name"].str.strip()!=""].reset_index(drop=True)
-# 検索用文字列
 df["s"] = df.apply(searchable_row_py, axis=1)
 
 # サムネ列
@@ -299,7 +279,7 @@ if BUILD_THUMBS:
 else:
     df["thumb"] = ""
 
-# ====== データJSON（インライン埋め込み用） ======
+# ====== データJSON ======
 def build_payload(df: pd.DataFrame) -> tuple[str,str]:
     for c in ["name","pack","code","rarity","booster","price","image","thumb","s"]:
         if c not in df.columns:
@@ -328,14 +308,16 @@ def build_payload(df: pd.DataFrame) -> tuple[str,str]:
 
 CARDS_VER, CARDS_JSON = build_payload(df)
 
-# ========= 見た目（CSS：2段ヘッダーで被り防止） =========
+# ========= 見た目（PC=1行／SP=2行） =========
 base_css = """
 *{box-sizing:border-box}
 :root{
   --bg:#ffffff; --panel:#ffffff; --border:#e5e7eb; --accent:#e11d48;
-  --text:#111111; --muted:#6b7280; --header-h: 136px;
+  --text:#111111; --muted:#6b7280; --header-h: 120px;
 }
 body{ margin:0;color:var(--text);background:var(--bg);font-family:Inter,system-ui,'Noto Sans JP',sans-serif; padding-top: var(--header-h); }
+
+/* === header（PCは1行：logo | title | actions、SPは2行） === */
 header{
   position:fixed;top:0;left:0;right:0;z-index:1000;background:#fff;border-bottom:1px solid var(--border);
   padding:10px 16px; box-shadow:0 2px 10px rgba(0,0,0,.04);
@@ -343,19 +325,17 @@ header{
 .header-wrap{
   max-width:1200px;margin:0 auto;display:grid;gap:8px;width:100%;
   grid-template-columns:auto 1fr auto;
-  grid-template-areas:
-    "logo title spacer"
-    "actions actions actions";
+  grid-template-areas: "logo title actions";   /* ← PCは1行に固定 */
   align-items:center;
 }
 .brand-left{grid-area:logo;display:flex;align-items:center;gap:12px;min-width:0}
-.brand-left img{height:64px;display:block}
+.brand-left img{height:80px;display:block}      /* ← ロゴを大きく（PC） */
 .center-ttl{
   grid-area:title; font-weight:1000; text-align:center;
   font-size:clamp(28px, 5.2vw, 52px); line-height:1.05; color:#111;
 }
-.right-spacer{grid-area:spacer;}
-.actions{grid-area:actions;display:flex;align-items:center;gap:10px;justify-content:center}
+.right-spacer{display:none}                     /* PCでは未使用 */
+.actions{grid-area:actions;display:flex;align-items:center;gap:10px;justify-content:flex-end}
 .iconbtn{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--border);background:#fff;color:#111;border-radius:12px;padding:9px 12px;text-decoration:none;font-size:13px;transition:transform .12s ease, background .12s ease}
 .iconbtn:hover{background:#f9fafb; transform:translateY(-1px)}
 .iconbtn svg{width:16px;height:16px;display:block;color:#111}
@@ -411,9 +391,18 @@ nav.simple strong{color:#111;user-select:none}
 .viewer img{max-width:92vw;max-height:92vh;display:block}
 .viewer button.close{position:absolute;top:-12px;right:-12px;background:#fff;border:1px solid var(--border);color:#111;border-radius:999px;width:38px;height:38px;cursor:pointer}
 
+/* ===== SPは2行（ロゴ/タイトル/スペーサー + アクション）に戻す ===== */
 @media (max-width:700px){
   :root{ --header-h: 144px; }
+  .header-wrap{
+    grid-template-columns:auto 1fr auto;
+    grid-template-areas:
+      "logo title spacer"
+      "actions actions actions";
+  }
   .brand-left img{height:56px}
+  .right-spacer{display:block; grid-area:spacer;}
+  .actions{justify-content:center}
   .center-ttl{ font-size:clamp(24px, 7vw, 36px) }
   .wrap{ padding:4px }
   .grid.grid-img{ gap:2px }
@@ -428,7 +417,7 @@ nav.simple strong{color:#111;user-select:none}
 small.note{color:var(--muted)}
 """
 
-# ========= JS（ヘッダー高さを測って被り防止；画像ON時は「名前＋型番＋価格のみ」） =========
+# ========= JS =========
 base_js = r"""
 (function(){
   const header = document.querySelector('header');
@@ -719,10 +708,9 @@ base_js = r"""
 })();
 """
 
-# ===== HTML（データはインライン埋め込み） =====
+# ===== HTML =====
 def html_page(title: str, js_source: str, logo_uri: str, cards_json: str) -> str:
-    # アイコン（SVG）
-    shop_svg = "<svg viewBox='0 0 24 24' aria-hidden='true' fill='currentColor'><path d='M3 9.5V8l2.2-3.6c.3-.5.6-.7 1-.7h11.6c.4 0 .7.2.9.6L21 8v1.5c0 1-.8 1.8-1.8 1.8-.9 0-1.6-.6-1.8-1.4-.2.8-.9 1.4-1.8 1.4s-1.6-.6-1.8-1.4c-.2.8-.9 1.4-1.8 1.4s-1.6-.6-1.8-1.4c-.2.8-.9 1.4-1.8 1.4s-1.6-.6-1.8-1.4c-.2.8-.9 1.4-1.8 1.4s-1.6-.6-1.8-1.4c-.2.8-.9 1.4-1.8 1.4C3.8 11.3 3 10.5 3 9.5zM5 12.5h14V20c0 .6-.4 1-1 1H6c-.6 0-1-.4-1-1v-7.5zm4 1.5v5h6v-5H9zM6.3 5.2 5 7.5h14l-1.3-2.3H6.3z'/></svg>"
+    shop_svg = "<svg viewBox='0 0 24 24' aria-hidden='true' fill='currentColor'><path d='M3 9.5V8l2.2-3.6c.3-.5.6-.7 1-.7h11.6c.4 0 .7.2.9.6L21 8v1.5c0 1-.8 1.8-1.8 1.8-.9 0-1.6-.6-1.8-1.4-.2.8-.9 1.4-1.8 1.4s-1.6-.6-1.8-1.4c-.2.8-.9 1.4-1.8 1.4s-1.6-.6-1.8-1.4c-.2.8-.9 1.4-1.8 1.4s-1.6-.6-1.8-1.4c-.2.8-.9 1.4-1.8 1.4C3.8 11.3 3 10.5 3 9.5zM5 12.5h14V20c0 .6-.4 1-1 1H6c-.6 0-1-.4-1-1v-7.5zm4 1.5v5h6v-5H9zM6.3 5.2 5 7.5h14l-1.3-2.3H6.3z'/></svg>"
     login_svg= "<svg viewBox='0 0 24 24' aria-hidden='true' fill='currentColor'><path d='M12 12a5 5 0 1 0-5-5 5 5 0 0 0 5 5zm0 2c-4.418 0-8 2.239-8 5v2h16v-2c0-2.761-3.582-5-8-5z'/></svg>"
 
     parts = []
@@ -758,7 +746,6 @@ def html_page(title: str, js_source: str, logo_uri: str, cards_json: str) -> str
     parts.append("  <small class='note'>このページ内のデータのみで検索・並び替え・ページングできます。画像クリックで拡大表示。</small>")
     parts.append("</main>")
 
-    # データをインライン埋め込み
     parts.append("<script>")
     parts.append("window.__CARDS__=" + cards_json + ";")
     parts.append("</script>")
