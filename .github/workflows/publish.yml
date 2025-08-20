@@ -14,8 +14,12 @@ concurrency:
 
 jobs:
   build:
-    # ← 自前ランナーに切替（config時に --labels local を付けた前提）
     runs-on: [self-hosted, local]
+
+    # 既定のシェルを Windows PowerShell に
+    defaults:
+      run:
+        shell: powershell
 
     steps:
       - name: Checkout
@@ -27,36 +31,37 @@ jobs:
           python-version: '3.11'
 
       - name: Install deps
-        shell: pwsh
         run: |
           python -m pip install --upgrade pip
           pip install pandas openpyxl pillow requests
 
-      # ===== POS から取得（URL/Cookie をサニタイズ、403対策の追加ヘッダ、デバッグ保存） =====
-      - name: Fetch from POS (pwsh, robust + sanitize + debug)
+      # ===== POSから取得（PowerShell 5.1 互換） =====
+      - name: Fetch from POS (powershell, robust + sanitize + debug)
         id: fetch
         env:
-          POS_FILE_URL:       ${{ secrets.POS_FILE_URL }}        # 最終URLを1行で
-          POS_COOKIE:         ${{ secrets.POS_COOKIE }}          # DevTools→NetworkのCookie全体（1行）
-          POS_AUTH_HEADER:    ${{ secrets.POS_AUTH_HEADER }}     # 任意: 例 "Authorization: Bearer xxxxx"
-          POS_X_CSRF_HEADER:  ${{ secrets.POS_X_CSRF_HEADER }}   # 任意: 例 "x-csrf-token: yyy"
-        shell: pwsh
+          POS_FILE_URL:       ${{ secrets.POS_FILE_URL }}
+          POS_COOKIE:         ${{ secrets.POS_COOKIE }}
+          POS_AUTH_HEADER:    ${{ secrets.POS_AUTH_HEADER }}
+          POS_X_CSRF_HEADER:  ${{ secrets.POS_X_CSRF_HEADER }}
         run: |
-          Set-StrictMode -Version Latest
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Force -Path data | Out-Null
 
-          # --- Sanitize URL/Cookie（改行/外側のクォート/Windowsの ^ を除去） ---
-          $url = ($env:POS_FILE_URL   ?? "") -replace "`r|`n",""
+          # --- Sanitize URL/Cookie（改行/外側クォート/Windowsの ^ を除去） ---
+          $url = $env:POS_FILE_URL
+          if (-not $url) { $url = "" }
+          $url = $url -replace "`r|`n",""
           $url = $url.Trim('"').Trim("'").Trim()
           $url = $url -replace '\^&','&' -replace '\^',''
           if ($url -notmatch '^https?://') { throw "POS_FILE_URL が不正（http/httpsで始まっていない）" }
 
-          $cookie = ($env:POS_COOKIE ?? "") -replace "`r|`n",""
+          $cookie = $env:POS_COOKIE
+          if (-not $cookie) { $cookie = "" }
+          $cookie = $cookie -replace "`r|`n",""
 
           # --- 秘密をマスク ---
           Write-Output "::add-mask::$url"
-          if ($cookie)            { Write-Output "::add-mask::$cookie" }
+          if ($cookie) { Write-Output "::add-mask::$cookie" }
           if ($env:POS_AUTH_HEADER)   { Write-Output "::add-mask::$($env:POS_AUTH_HEADER)" }
           if ($env:POS_X_CSRF_HEADER) { Write-Output "::add-mask::$($env:POS_X_CSRF_HEADER)" }
 
@@ -76,26 +81,31 @@ jobs:
             "sec-ch-ua-platform" = "Windows"
             "X-Requested-With"   = "XMLHttpRequest"
           }
-          if ($cookie) {
-            $headers["Cookie"] = $cookie
-          }
+          if ($cookie) { $headers["Cookie"] = $cookie }
           if ($env:POS_AUTH_HEADER) {
-            $k,$v = $env:POS_AUTH_HEADER.Split(":",2); if ($v) { $headers[$k.Trim()] = $v.Trim() }
+            $parts = $env:POS_AUTH_HEADER.Split(":",2)
+            if ($parts.Count -eq 2) { $headers[$parts[0].Trim()] = $parts[1].Trim() }
           }
           if ($env:POS_X_CSRF_HEADER) {
-            $k,$v = $env:POS_X_CSRF_HEADER.Split(":",2); if ($v) { $headers[$k.Trim()] = $v.Trim() }
+            $parts = $env:POS_X_CSRF_HEADER.Split(":",2)
+            if ($parts.Count -eq 2) { $headers[$parts[0].Trim()] = $parts[1].Trim() }
           }
 
           # --- 取得：成功/失敗でも headers/body を保存 ---
           $code = 0
           try {
-            $resp = Invoke-WebRequest -Uri $url -Headers $headers -Method GET -MaximumRedirection 5 -ErrorAction Stop -OutFile data/raw.bin
-            $code = $resp.StatusCode
-            $resp.Headers.GetEnumerator() | ForEach-Object { "$($_.Key): $($_.Value)" } | Set-Content -Encoding ASCII data/headers.txt
+            $resp = Invoke-WebRequest -Uri $url -Headers $headers -Method GET -MaximumRedirection 5 -OutFile data/raw.bin -ErrorAction Stop
+            if ($resp -and $resp.StatusCode) { $code = [int]$resp.StatusCode } else { $code = 200 }
+            if ($resp -and $resp.Headers) {
+              $resp.Headers.GetEnumerator() | ForEach-Object { "$($_.Key): $($_.Value)" } | Set-Content -Encoding ASCII data/headers.txt
+            } else {
+              "content-type: application/octet-stream" | Set-Content -Encoding ASCII data/headers.txt
+            }
           } catch {
             if ($_.Exception.Response) {
-              $code = $_.Exception.Response.StatusCode.value__
-              $_.Exception.Response.Headers.GetEnumerator() | ForEach-Object { "$($_.Key): $($_.Value)" } | Set-Content -Encoding ASCII data/headers.txt
+              $response = [System.Net.HttpWebResponse]$_.Exception.Response
+              $code = [int]$response.StatusCode
+              $response.Headers.GetEnumerator() | ForEach-Object { "$($_.Key): $($_.Value)" } | Set-Content -Encoding ASCII data/headers.txt
               Copy-Item -Force data/raw.bin data/error_body.bin -ErrorAction SilentlyContinue
             } else { throw }
           }
@@ -103,13 +113,13 @@ jobs:
           "HTTP $code" | Write-Host
           Get-Content data/headers.txt -TotalCount 50 -EA SilentlyContinue | Write-Host
 
-          if ($code -ne 200) {
-            throw "HTTP $code（Cookie期限切れ/WAFの可能性）。headers.txt / error_body.bin を確認。"
-          }
+          if ($code -ne 200) { throw "HTTP $code（Cookie期限切れ/WAFの可能性）。headers.txt / error_body.bin を確認。" }
 
           # --- Content-Type で保存名を振り分け ---
-          $ctype = (Get-Content data/headers.txt | Select-String -Pattern '^content-type:' -SimpleMatch -CaseSensitive:$false | Select-Object -Last 1).ToString()
-          $ctype = ($ctype -replace '^[^:]+:\s*','').ToLower().Split(';')[0]
+          $ctypeLine = Get-Content data/headers.txt | Where-Object { $_ -match '^[Cc]ontent-[Tt]ype:' } | Select-Object -Last 1
+          $ctype = ""
+          if ($ctypeLine) { $ctype = ($ctypeLine -replace '^[^:]+:\s*','').ToLower().Split(';')[0] }
+
           if ($ctype -match 'application/json') {
             Move-Item -Force data/raw.bin data/items.json
           } elseif ($ctype -match 'application/(vnd\.openxmlformats\-officedocument\.spreadsheetml\.sheet|octet-stream)') {
@@ -117,17 +127,18 @@ jobs:
           } elseif ($ctype -match 'text/csv|application/csv') {
             Move-Item -Force data/raw.bin data/buylist.csv
           } else {
-            # 先頭1byteでJSONっぽさを推定
-            $first = [System.Text.Encoding]::ASCII.GetString([System.IO.File]::ReadAllBytes("data/raw.bin"),0,1)
-            if ($first -eq '{') { Move-Item -Force data/raw.bin data/items.json } else { Move-Item -Force data/raw.bin data/buylist.xlsx }
+            $bytes = [System.IO.File]::ReadAllBytes("data\raw.bin")
+            if ($bytes.Length -gt 0 -and $bytes[0] -eq 123) { # '{'
+              Move-Item -Force data/raw.bin data/items.json
+            } else {
+              Move-Item -Force data/raw.bin data/buylist.xlsx
+            }
           }
 
           Get-ChildItem data
 
-      # ===== JSON だった場合は CSV に変換（pwsh で一時スクリプトを作る方式） =====
       - name: Convert JSON to CSV (generic)
         if: ${{ hashFiles('data/items.json') != '' }}
-        shell: pwsh
         run: |
           $code = @'
           import json, pandas as pd
@@ -143,27 +154,25 @@ jobs:
               data = [data]
           df = json_normalize(data, sep=".")
           df.to_csv("data/buylist.csv", index=False, encoding="utf-8")
-          print(f"Wrote data/buylist.csv rows={len(df)} cols={len(df.columns)}")
+          print("Wrote data/buylist.csv rows=%d cols=%d" % (len(df), len(df.columns)))
           '@
           $code | Set-Content -Encoding UTF8 .\convert_json_to_csv.py
           python .\convert_json_to_csv.py
           Get-ChildItem data
 
-      # ===== 静的ページ生成（あなたの gen_buylist.py を使用） =====
       - name: Build static pages
-        shell: pwsh
         env:
           OUT_DIR: docs
           PER_PAGE: "80"
           BUILD_THUMBS: "0"
         run: |
-          $input = @("data\buylist.xlsx","data\buylist.csv","buylist.xlsx","buylist.csv") | Where-Object { Test-Path $_ } | Select-Object -First 1
+          $candidates = @("data\buylist.xlsx","data\buylist.csv","buylist.xlsx","buylist.csv")
+          $input = $null
+          foreach ($p in $candidates) { if (Test-Path $p) { $input = $p; break } }
           if (-not $input) { throw "入力データがありません（POS取得失敗 & リポジトリにも無い）" }
           python gen_buylist.py $input
 
-      # ===== 公開用 docs/ をコミット =====
       - name: Commit & push docs
-        shell: pwsh
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -175,7 +184,6 @@ jobs:
             git push
           }
 
-      # ===== 失敗時でもヘッダ/本文を拾えるように =====
       - name: Upload debug artifacts
         if: always()
         uses: actions/upload-artifact@v4
