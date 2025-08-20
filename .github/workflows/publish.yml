@@ -64,3 +64,35 @@ jobs:
             git commit -m "update buylist (auto)"
             git push
           fi
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 20
+
+      - name: Install deps (Node)
+        run: npm ci
+
+      - name: Run fetcher
+        run: npm run fetch
+        env:
+          POS_EMAIL: ${{ secrets.POS_EMAIL }}
+          POS_PASSWORD: ${{ secrets.POS_PASSWORD }}
+          GAS_WEBHOOK_URL: ${{ secrets.GAS_WEBHOOK_URL }}
+          GAS_SHARED_SECRET: ${{ secrets.GAS_SHARED_SECRET }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: Install deps (Python)
+        run: pip install -r requirements.txt
+
+      - name: Build static pages
+        run: python gen_buylist.py
