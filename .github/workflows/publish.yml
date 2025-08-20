@@ -92,3 +92,12 @@ jobs:
             git commit -m "update buylist (auto)"
             git push
           fi
+- name: Upload debug artifacts (always)
+  if: always()
+  uses: actions/upload-artifact@v4
+  with:
+    name: playwright-debug
+    path: |
+      debug/*
+      *.log
+    if-no-files-found: ignore
