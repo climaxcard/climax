@@ -6,9 +6,9 @@ r"""
 - 画像URLは Q列系（allow_auto_print_label 等）最優先。=IMAGE() 抽出にも対応
 - 画像ON時は「カード名＋型番＋買取価格のみ」（スマホ最適化：型番はバッジ・nowrap）
 - ロゴは LOGO_FILE 環境変数 or assets/logo.png を最優先で埋め込み（base64）
-- 見出しは 2段ヘッダー（PC: 1行 / SP: 2行）
-- ページネーション：PC=左(最初/前)・中央(数字)・右(次/最後)、SP=数字→最初/前/次/最後の2行
-- ヘッダー右端に X / LINE の画像アイコン（同サイズ枠・中身は枠でトリミング）
+- 見出し（スマホ）：1段目=左ロゴ+右タイトル／2段目=Shop/Login/X/LINE アイコン
+- ページネーション：PC=左右(最初/前|次/最後)＋中央(数字)／SP=数字→操作の2行。SPは中央寄せ＆コンパクト
+- カード名のめり込み対策：名前のみ省略（ellipsis）、型番バッジは固定幅
 """
 
 from pathlib import Path
@@ -104,15 +104,15 @@ def find_icon_path(env_path: str, default_names: list[str]):
     cands = []
     if env_path:
         cands.append(Path(env_path))
-    cands += [Path("assets") / n for n in default_names]                 # assets/
-    cands += [Path(os.getcwd()) / n for n in default_names]              # CWD
+    cands += [Path("assets") / n for n in default_names]
+    cands += [Path(os.getcwd()) / n for n in default_names]
     try:
-        here = Path(__file__).parent                                     # スクリプト隣
+        here = Path(__file__).parent
         cands += [here / "assets" / n for n in default_names]
         cands += [here / n for n in default_names]
     except NameError:
         pass
-    cands += [FIXED_ICON_DIR / n for n in default_names]                 # 固定フォルダ
+    cands += [FIXED_ICON_DIR / n for n in default_names]
     for p in cands:
         try:
             if p.exists() and p.is_file():
@@ -134,7 +134,6 @@ def _read_csv_auto(path: Path) -> pd.DataFrame:
     return pd.read_csv(path)
 
 def _normalize_two_header_layout(df: pd.DataFrame) -> pd.DataFrame:
-    """二重ヘッダ（2行見出し→英語キー行→データ）を、英語キー行を正式ヘッダに整える。"""
     try:
         cand = []
         m = min(12, len(df))
@@ -358,43 +357,36 @@ header{
   padding:10px 16px; box-shadow:0 2px 10px rgba(0,0,0,.04);
 }
 .header-wrap{
-  max-width:1080px; /* PC時に全体を少し中央寄せ */
-  margin:0 auto;display:grid;gap:8px;width:100%;
+  max-width:1080px;margin:0 auto;display:grid;gap:8px;width:100%;
   grid-template-columns:auto 1fr auto;
   grid-template-areas: "logo title actions";
   align-items:center;
 }
 .brand-left{grid-area:logo;display:flex;align-items:center;gap:12px;min-width:0}
 .brand-left img{height:80px;display:block}
-.center-ttl{
-  grid-area:title;
-  font-weight:1000; text-align:center;
-  font-size:clamp(28px, 5.2vw, 52px); line-height:1.05; color:#111;
-  white-space: normal;
 
-  /* 横書き固定（スマホで縦にならないよう強制） */
-  writing-mode: horizontal-tb !important;
-  text-orientation: mixed !important;
-  word-break: keep-all;
+.center-ttl{
+  grid-area:title; font-weight:1000; text-align:left;
+  font-size:clamp(28px, 5vw, 48px); line-height:1.05; color:#111;
+  white-space:normal; writing-mode:horizontal-tb !important; text-orientation:mixed !important;
+  word-break:keep-all;
 }
+
 .right-spacer{display:none}
 .actions{grid-area:actions;display:flex;align-items:center;gap:10px;justify-content:flex-end}
-.iconbtn{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--border);background:#fff;color:#111;border-radius:12px;padding:9px 12px;text-decoration:none;font-size:13px;transition:transform .12s ease, background .12s ease}
+.iconbtn{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--border);background:#fff;color:#111;border-radius:12px;padding:8px 10px;text-decoration:none;font-size:13px;transition:transform .12s ease, background .12s ease}
 .iconbtn:hover{background:#f9fafb; transform:translateY(-1px)}
 .iconbtn svg{width:16px;height:16px;display:block;color:#111}
 
-/* === X/LINE 画像アイコン（同サイズ枠＋中身は枠でトリミング） === */
+/* X/LINE 画像アイコン */
 .iconimg{
   display:inline-flex;align-items:center;justify-content:center;
   border:1px solid var(--border);background:#fff;color:#111;
   border-radius:12px;text-decoration:none;overflow:hidden;
-  transition:transform .12s ease, background .12s ease;
-  line-height:0;
+  transition:transform .12s ease, background .12s ease; line-height:0;
 }
 .iconimg:hover{ background:#f9fafb; transform:translateY(-1px); }
-/* 枠サイズ：32x32 */
 .iconimg--x, .iconimg--line{ width:32px; height:32px; padding:0; }
-/* 中の画像：余白なしで枠トリミング */
 .iconimg--x img{    display:block; width:118%; height:118%; object-fit:cover; }
 .iconimg--line img{ display:block; width:145%; height:145%; object-fit:cover; }
 
@@ -410,11 +402,10 @@ header{
 #packQ{grid-area:q3}
 #rarityQ{grid-area:q4}
 .controls .btns{ grid-area:acts; display:flex; gap:8px; flex-wrap:wrap }
-
-input.search{background:#fff;border:1px solid var(--border);color:#111;border-radius:12px;padding:11px 12px;font-size:14px;outline:none;min-width:0;transition:box-shadow .12s ease;width:100%}
+input.search{background:#fff;border:1px solid var(--border);color:#111;border-radius:12px;padding:10px 12px;font-size:14px;outline:none;min-width:0;transition:box-shadow .12s ease;width:100%}
 input.search::placeholder{color:#9ca3af}
 input.search:focus{ box-shadow:0 0 0 2px rgba(17,24,39,.08) }
-.btn{background:#fff;border:1px solid var(--border);color:#111;border-radius:12px;padding:9px 12px;font-size:13px;cursor:pointer;text-decoration:none;white-space:nowrap;transition:transform .12s ease, background .12s ease}
+.btn{background:#fff;border:1px solid var(--border);color:#111;border-radius:10px;padding:8px 10px;font-size:13px;cursor:pointer;text-decoration:none;white-space:nowrap;transition:transform .12s ease, background .12s ease}
 .btn:hover{background:#f9fafb; transform:translateY(-1px)}
 .btn.active{outline:2px solid var(--accent)}
 
@@ -430,246 +421,109 @@ input.search:focus{ box-shadow:0 0 0 2px rgba(17,24,39,.08) }
 .th img{width:100%;height:100%;object-fit:cover;display:block;background:#f3f4f6}
 .b{padding:10px 12px}
 
-.n{font-size:14px;font-weight:800;line-height:1.25;margin:0 0 6px;color:#111;display:flex;gap:6px;align-items:baseline;flex-wrap:wrap;word-break:break-word}
-.n .code{margin-left:0;font-weight:700;font-size:12px;color:#374151;background:#f3f4f6;border:1px solid #e5e7eb;border-radius:8px;padding:2px 6px;white-space:nowrap}
+/* カード名の“めり込み”対策（名前だけ省略、バッジは固定） */
+.n{font-size:14px;font-weight:800;line-height:1.25;margin:0 0 6px;color:#111;display:flex;gap:6px;align-items:baseline;flex-wrap:nowrap;min-width:0}
+.n .tt{flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.n .code{flex:0 0 auto; margin-left:0;font-weight:700;font-size:12px;color:#374151;background:#f3f4f6;border:1px solid #e5e7eb;border-radius:8px;padding:2px 6px;white-space:nowrap}
 
 .meta{font-size:11px;color:var(--muted);word-break:break-word}
 .p{margin-top:6px;display:flex;flex-wrap:wrap}
-.mx{font-weight:1000;color:var(--accent);font-size:clamp(16px, 2.4vw, 22px);line-height:1.05;text-shadow:none;white-space:nowrap;display:inline-block;max-width:100%}
+.mx{font-weight:1000;color:var(--accent);font-size:clamp(16px, 2.2vw, 22px);line-height:1.05;text-shadow:none;white-space:nowrap;display:inline-block;max-width:100%}
 .grid.grid-img .meta{display:none}
 
 /* === 画像ビューワ（オーバーレイ）=== */
-.viewer{
-  position: fixed; inset: 0; background: rgba(0,0,0,.86);
-  display: none; align-items: center; justify-content: center; z-index: 2000;
-}
+.viewer{ position: fixed; inset: 0; background: rgba(0,0,0,.86); display: none; align-items: center; justify-content: center; z-index: 2000; }
 .viewer.show{ display: flex; }
 .viewer .vc{ position: relative; max-width: 92vw; max-height: 92vh; }
 .viewer img{ display:block; max-width:92vw; max-height:92vh; width:auto; height:auto; object-fit:contain; }
-.viewer button.close{
-  position:absolute; top:-12px; right:-12px; background:#fff; border:1px solid var(--border); color:#111;
-  border-radius:999px; width:38px; height:38px; cursor:pointer;
-}
+.viewer button.close{ position:absolute; top:-12px; right:-12px; background:#fff; border:1px solid var(--border); color:#111; border-radius:999px; width:38px; height:38px; cursor:pointer; }
 body.modal-open{ overflow:hidden; }
 
-/* ===== ページネーション（PC=左/中央/右） ===== */
-/* ===== ページネーション（PC=左/中央/右、SP=2行） ===== */
+/* ===== ページネーション（共通の見た目） ===== */
 nav.simple{ margin:14px 0; }
-
-/* ★ここを修正：PCは中央を絶対センターにするため 1fr auto 1fr に */
-nav.simple .pager{
-  display:grid;
-  grid-template-columns: 1fr auto 1fr;   /* ← 修正（元: auto 1fr auto） */
-  align-items:center;
-  gap:12px;
-}
-
-/* 左右は端に寄せる／中央はど真ん中 */
-nav.simple .left,
-nav.simple .center,
-nav.simple .right{
-  display:flex; align-items:center; gap:8px; flex-wrap:wrap;
-}
-nav.simple .left  { justify-content:flex-start; }  /* ← 追加 */
-nav.simple .center{ justify-content:center; }      /* 既存 */
-nav.simple .right { justify-content:flex-end; }    /* ← 追加 */
-
+nav.simple .pager{ display:grid; grid-template-columns:auto 1fr auto; align-items:center; gap:8px; }
+nav.simple .left, nav.simple .center, nav.simple .right{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+nav.simple .center{ justify-content:center; }
 nav.simple a, nav.simple button{
   color:#111;background:#fff;border:1px solid var(--border);
-  padding:6px 12px;border-radius:10px;text-decoration:none;white-space:nowrap;font-size:13px;line-height:1;cursor:pointer
+  padding:5px 10px;border-radius:10px;text-decoration:none;white-space:nowrap;font-size:13px;line-height:1;cursor:pointer
 }
 nav.simple a.disabled{opacity:.45;pointer-events:none}
 nav.simple .num[aria-current="page"]{ background:#111;color:#fff;border-color:#111;cursor:default }
-nav.simple .ellipsis{border:none;background:transparent;cursor:default;padding:0 4px}
+nav.simple .ellipsis{border:none;background:transparent;cursor:default;padding:0 2px}
 
-/* SP二段（上：数字／下：最初/前/次/最後） */
-nav.simple .controls-mobile{ display:none; }
-
-/* ======== SP 調整（既存のままでOK） ======== */
+/* ======== スマホ最適化（中央寄せ＆コンパクト） ======== */
 @media (max-width:700px){
-  /* SPは2段：上が数字・下が最初/前/次/最後。各行は横1列キープ */
-  nav.simple .pager{
-    display:flex;
-    flex-direction:column;
-    gap:6px;
-  }
+  :root{ --header-h: 148px; }
 
-  nav.simple .left, nav.simple .right{ display:none; }
-
-  /* 数字行：横並び・中央寄せ・横スクロール */
-  nav.simple .center{
-    order:1;
-    display:flex;
-    flex-direction:row;
-    align-items:center;
-    justify-content:center;
-    gap:6px;
-    flex-wrap:nowrap;
-    overflow-x:auto;
-    -webkit-overflow-scrolling:touch;
-    padding-inline:10px;
-    scroll-padding-inline:10px;
-    white-space:nowrap;
-    writing-mode:horizontal-tb !important;
-    text-orientation:mixed !important;
-    margin-inline:auto;             /* ← 念のため中央に据える */
-  }
-  nav.simple .center .num,
-  nav.simple .center .ellipsis{
-    flex:0 0 auto;
-    display:inline-flex;
-    align-items:center;
-    justify-content:center;
-    min-width:34px;
-    height:30px;
-  }
-
-  /* 操作行：横1列・必要なら横スクロール */
-  nav.simple .controls-mobile{
-    order:2;
-    display:flex;
-    flex-direction:row;
-    justify-content:center;
-    gap:6px;
-    flex-wrap:nowrap;
-    padding:0 6px;
-    overflow-x:auto;
-    -webkit-overflow-scrolling:touch;
-    white-space:nowrap;
-  }
-}
-
-
-/* === ここから：スマホ用ページャ横1列固定（数字行／操作行）※必ずCSSの末尾に置く === */
-/* ========= スマホ最適化（ヘッダー/ページャ/カード圧縮） ========= */
-@media (max-width:700px){
-
-  /* ヘッダー：1段目=ロゴ+タイトル / 2段目=アクション(SHOP/LOGIN/X/LINE) */
+  /* ヘッダ：1段目=ロゴ+タイトル、2段目=アクション */
   .header-wrap{
-    grid-template-columns: auto 1fr;
+    grid-template-columns:auto 1fr auto;
     grid-template-areas:
-      "logo title"
-      "actions actions";
-    row-gap: 6px;
-    align-items: center;
+      "logo title spacer"
+      "actions actions actions";
+    align-items:center;
   }
-  .brand-left img{ height:52px; }                 /* ロゴ少しだけ小さく */
-  .center-ttl{
-    grid-area: title;
-    text-align: left;                              /* ロゴ右横に自然に並べる */
-    font-size: clamp(22px, 6.4vw, 34px);
-    margin: 0;
-    min-width: 0;
-    writing-mode: horizontal-tb !important;
-    text-orientation: mixed !important;
-    word-break: keep-all;
-  }
-  .actions{
-    grid-area: actions;
-    justify-content: center;
-    gap: 8px;
-    flex-wrap: wrap;                               /* 見切れ前に折返し可 */
-  }
-  .iconimg--x, .iconimg--line{ width:28px; height:28px; }
-  .iconimg--x img   { width:120%; height:120%; object-fit:cover; }
-  .iconimg--line img{ width:150%; height:150%; object-fit:cover; }
+  .brand-left img{ height:56px }
+  .right-spacer{ display:block; grid-area:spacer; }
+  .actions{ grid-area:actions; justify-content:center; gap:8px; flex-wrap:wrap; }
 
-  /* ページャ：数字列 = 1行中央、操作列(≪最初/前/次/最後≫) = 1行中央に“確実”に収める */
+  .center-ttl{ font-size:clamp(22px, 6.6vw, 34px); text-align:left; }
+
+  .wrap{ padding:6px }
+  .grid.grid-img{ gap:2px }
+  .b{ padding:6px }
+  .n{ font-size:12px; line-height:1.1 }
+  .n .code{ font-size:10px; padding:1px 5px; border-radius:6px }
+  .mx{ font-size:clamp(12px, 4vw, 16px); white-space:nowrap }
+
+  /* ページャ：2段（上=数字／下=最初前次最後）。どちらも中央寄せ＆コンパクトで1行保持 */
   nav.simple .pager{
-    display:flex;
-    flex-direction:column;
-    gap:6px;
+    display:flex; flex-direction:column; align-items:stretch; gap:6px;
   }
-  /* PC用 左右は非表示（スマホは2段構成） */
-  nav.simple .left, nav.simple .right{ display:none; }
 
-  /* 数字の列（中央・1行固定） */
+  /* 数字行：中央寄せ・コンパクト。多すぎる時だけ横スクロール */
   nav.simple .center{
-    order:1;
-    display:flex;
-    flex-direction:row;
-    align-items:center;
-    justify-content:center;        /* ← きっちり中央 */
-    gap:6px;
-    flex-wrap:nowrap;              /* ← 改行させない */
-    overflow-x:hidden;             /* ← スクロール無しで見栄え優先 */
-    padding-inline:10px;
-    white-space:nowrap;
-    margin-inline:auto;
-    writing-mode:horizontal-tb !important;
-    text-orientation:mixed !important;
+    order:1; display:flex; justify-content:center; align-items:center;
+    gap:4px; flex-wrap:nowrap; margin:0 auto; padding:0 6px;
+    max-width:100%; white-space:nowrap;
+    overflow:hidden; /* 基本はスクロール無し */
   }
-  nav.simple .center .num,
-  nav.simple .center .ellipsis{
-    flex:0 0 auto;
-    display:inline-flex;
-    align-items:center;
-    justify-content:center;
-    min-width:30px;
-    height:28px;
+  /* もし入り切らない時だけ JS で .scroll を付ける（下のJS参照） */
+  nav.simple .center.scroll{ overflow-x:auto; -webkit-overflow-scrolling:touch; }
+
+  nav.simple .center .num, nav.simple .center .ellipsis{
+    flex:0 0 auto; min-width:28px; height:28px; padding:0 8px; font-size:12px; line-height:28px; border-radius:8px;
   }
 
-  /* 「≪ 最初 / 前 / 次 / 最後 ≫」列（1行に収めるため小型化） */
+  /* 操作行：中央寄せ・さらに小さめ */
   nav.simple .controls-mobile{
-    order:2;
-    display:flex;
-    flex-direction:row;
-    justify-content:center;
-    align-items:center;
-    gap:4px;                       /* ← 余白を詰める */
-    flex-wrap:nowrap;              /* ← 1行固定 */
-    padding:0 6px;
-    overflow-x:hidden;             /* ← 横スクロール無し */
-    white-space:nowrap;
-    margin-inline:auto;
+    order:2; display:flex; justify-content:center; align-items:center;
+    gap:4px; flex-wrap:nowrap; margin:0 auto; padding:0 6px; max-width:100%; white-space:nowrap; overflow:hidden;
   }
-  nav.simple .controls-mobile a,
-  nav.simple .controls-mobile button{
-    font-size: clamp(9.5px, 2.6vw, 11.5px);  /* ← テキスト自動縮小 */
-    padding:4px 6px;                         /* ← 余白圧縮 */
-    border-radius:6px;
-    letter-spacing:-0.2px;                   /* ← わずかに詰める */
+  nav.simple .controls-mobile a, nav.simple .controls-mobile button{
+    flex:0 0 auto; padding:3px 6px; font-size:11px; border-radius:6px;
   }
 
-  /* カードの“縦長感”を軽減（余白・文字量を調整） */
-  .grid.grid-img{ gap:2px; }
-  .card{ border-radius:12px; }
-  .b{ padding:4px 6px; }                     /* 本文余白を減らす */
-  .n{
-    font-size:12px;
-    line-height:1.1;
-    display:flex; align-items:center; gap:6px;
-    min-width:0;
-    white-space:nowrap;                      /* ← 1行にして */
-    overflow:hidden; text-overflow:ellipsis; /* ← 省略記号で詰める */
-  }
-  .n .code{
-    font-size:10px; padding:1px 5px; border-radius:6px; flex:0 0 auto;
-  }
-  .mx{ font-size: clamp(12px, 3.8vw, 15px); white-space:nowrap; }
+  /* PC用左右ブロックは隠す */
+  nav.simple .left, nav.simple .right{ display:none; }
 }
-
+small.note{color:var(--muted)}
 """
 
 # ========= JS =========
 base_js = r"""
 (function(){
-  // --- ヘッダー高さを CSS 変数に反映 ---
+  // ヘッダ高さを CSS 変数に反映
   const header = document.querySelector('header');
   const setHeaderH = () => {
     const h = header?.getBoundingClientRect().height || 144;
     document.documentElement.style.setProperty('--header-h', Math.ceil(h) + 'px');
   };
   setHeaderH();
-  window.addEventListener('resize', setHeaderH);
-  window.addEventListener('load', setHeaderH);
-  document.querySelectorAll('header img').forEach(img => {
-    if (!img.complete) img.addEventListener('load', setHeaderH);
-  });
-  if ('ResizeObserver' in window && header) {
-    const ro = new ResizeObserver(() => setHeaderH());
-    ro.observe(header);
-  }
+  ['resize','load'].forEach(ev=>window.addEventListener(ev, setHeaderH));
+  document.querySelectorAll('header img').forEach(img => { if (!img.complete) img.addEventListener('load', setHeaderH); });
+  if ('ResizeObserver' in window && header) new ResizeObserver(setHeaderH).observe(header);
 
   const nameQ  = document.getElementById('nameQ');
   const codeQ  = document.getElementById('codeQ');
@@ -695,9 +549,7 @@ base_js = r"""
   const __PER = __PER_PAGE__;
   const PER_PAGE_ADJ = (isMobile || slowNet || cores <= 4) ? Math.min(__PER, 48) : __PER;
 
-  function pick(nLo, nMd, nHi){
-    return (cores <= 4) ? nLo : ((isMobile || slowNet) ? nMd : nHi);
-  }
+  function pick(nLo, nMd, nHi){ return (cores <= 4) ? nLo : ((isMobile || slowNet) ? nMd : nHi); }
   const eager1 = pick(4, 8, 16);
   const eager2 = pick(8, 16, 32);
 
@@ -706,8 +558,7 @@ base_js = r"""
   let saved = localStorage.getItem('showImages');
   if (saved === 'true')  { localStorage.setItem('showImages','1'); saved = '1'; }
   if (saved === 'false') { localStorage.setItem('showImages','0'); saved = '0'; }
-  if (saved === null) showImages = true;
-  else showImages = (saved === '1');
+  showImages = (saved === null) ? true : (saved === '1');
 
   const SEP_RE = /[\s\u30FB\u00B7·/／\-_—–−]+/g;
   function kataToHira(str){ return (str||'').replace(/[\u30A1-\u30FA]/g, ch => String.fromCharCode(ch.charCodeAt(0)-0x60)); }
@@ -729,9 +580,7 @@ base_js = r"""
   }
 
   function fmtYen(n){ return (n==null||n==='')?'-':('¥'+parseInt(n,10).toLocaleString()); }
-  function escHtml(s){
-    return (s||'').replace(/[&<>\"']/g, m => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", "\"":"&quot;", "'":"&#39;" }[m]));
-  }
+  function escHtml(s){ return (s||'').replace(/[&<>\"']/g, m => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", "\"":"&quot;", "'":"&#39;" }[m])); }
 
   function norm(it){
     return {
@@ -766,8 +615,8 @@ base_js = r"""
     _rarity_lat:      normalizeLatin(it.rarity || "")
   }));
 
-  let VIEW=[];
-  let page=1;
+  let VIEW=[]; 
+  let page=1; 
   let currentSort=__INITIAL_SORT__;
 
   function shrinkPrices(root=document){
@@ -781,6 +630,7 @@ base_js = r"""
     });
   }
 
+  // --- カードHTML ---
   function cardHTML_img(it){
     const nameEsc = escHtml(it.name||'');
     const full = it.image||'';
@@ -798,7 +648,7 @@ base_js = r"""
            onerror="this.onerror=null;var p=this.closest('.th');this.src=p?p.getAttribute('data-full'):this.src;">
     </div>
     <div class="b">
-      <h3 class="n">${nameEsc}${codeHtml}</h3>
+      <h3 class="n"><span class="tt">${nameEsc}</span>${codeHtml}</h3>
       <div class="p"><span class="mx">${fmtYen(it.price)}</span></div>
     </div>
   </article>`;
@@ -810,7 +660,7 @@ base_js = r"""
     return `
   <article class="card">
     <div class="b">
-      <h3 class="n">${nameEsc}</h3>
+      <h3 class="n"><span class="tt">${nameEsc}</span></h3>
       <div class="meta">${escHtml(meta)}</div>
       <div class="p"><span class="mx">${fmtYen(it.price)}</span></div>
     </div>
@@ -872,57 +722,58 @@ base_js = r"""
     page=1; render();
   }
 
+  // ページ番号（PC:前後3 / SP:前後2）
   function buildPageButtons(cur, total){
     const around = matchMedia('(max-width: 700px)').matches ? 2 : 3;
     const btns = [];
     btns.push({type:'num', page:1});
+
     const start = Math.max(2, cur - around);
     const end   = Math.min(total - 1, cur + around);
+
     if (start > 2) btns.push({type:'ellipsis'});
     for (let p = start; p <= end; p++){
       if (p >= 2 && p <= total-1) btns.push({type:'num', page:p});
     }
     if (end < total - 1) btns.push({type:'ellipsis'});
+
     if (total > 1) btns.push({type:'num', page:total});
     return btns;
   }
 
-  // --- 追加：幅変更で再描画（ファイル先頭の即時関数内でOK） ---
-const mqlForPager = matchMedia('(max-width: 700px)');
-mqlForPager.addEventListener?.('change', () => { render(); });
+  function renderPager(cur, total){
+    const first = (cur>1)  ? `<a href="#" data-jump="first" class="first">≪ 最初のページ</a>` : `<a class="disabled">≪ 最初のページ</a>`;
+    const prev  = (cur>1)  ? `<a href="#" data-jump="prev"  class="prev">← 前のページ</a>` : `<a class="disabled">← 前のページ</a>`;
+    const next  = (cur<total) ? `<a href="#" data-jump="next"  class="next">次のページ →</a>` : `<a class="disabled">次のページ →</a>`;
+    const last  = (cur<total) ? `<a href="#" data-jump="last"  class="last">最後のページ ≫</a>` : `<a class="disabled">最後のページ ≫</a>`;
 
-// --- 置き換え：renderPager（PCとSPで描画を出し分ける） ---
-function renderPager(cur, total){
-  const mob = matchMedia('(max-width: 700px)').matches;
+    const nums = buildPageButtons(cur, total).map(item=>{
+      if (item.type==='ellipsis') return `<span class="ellipsis">…</span>`;
+      const p=item.page;
+      return (p===cur)
+        ? `<button class="num" aria-current="page" aria-label="現在のページ ${p}" disabled>${p}</button>`
+        : `<a class="num" href="#" data-page="${p}" aria-label="ページ ${p}">${p}</a>`;
+    }).join(' ');
 
-  const first = (cur>1)     ? `<a href="#" data-jump="first" class="first">≪ 最初のページ</a>` : `<a class="disabled">≪ 最初のページ</a>`;
-  const prev  = (cur>1)     ? `<a href="#" data-jump="prev"  class="prev">← 前のページ</a>`   : `<a class="disabled">← 前のページ</a>`;
-  const next  = (cur<total) ? `<a href="#" data-jump="next"  class="next">次のページ →</a>`   : `<a class="disabled">次のページ →</a>`;
-  const last  = (cur<total) ? `<a href="#" data-jump="last"  class="last">最後のページ ≫</a>`  : `<a class="disabled">最後のページ ≫</a>`;
+    return `
+      <div class="pager">
+        <div class="left">${first} ${prev}</div>
+        <div class="center"><span class="nums">${nums}</span></div>
+        <div class="right">${next} ${last}</div>
+        <div class="controls-mobile">${first} ${prev} ${next} ${last}</div>
+      </div>
+    `;
+  }
 
-  const nums = buildPageButtons(cur, total).map(item=>{
-    if (item.type==='ellipsis') return `<span class="ellipsis">…</span>`;
-    const p=item.page;
-    return (p===cur)
-      ? `<button class="num" aria-current="page" aria-label="現在のページ ${p}" disabled>${p}</button>`
-      : `<a class="num" href="#" data-page="${p}" aria-label="ページ ${p}">${p}</a>`;
-  }).join(' ');
-
-  // PCは left/center/right、SPは center + controls-mobile のみ
-  const left   = mob ? '' : `<div class="left">${first} ${prev}</div>`;
-  const right  = mob ? '' : `<div class="right">${next} ${last}</div>`;
-  const mobile = mob ? `<div class="controls-mobile">${first} ${prev} ${next} ${last}</div>` : '';
-
-  return `
-    <div class="pager">
-      ${left}
-      <div class="center">${nums}</div>
-      ${right}
-      ${mobile}
-    </div>
-  `;
-}
-
+  function ensureMobileCenterFits(){
+    // 数字行が収まらない場合だけ、横スクロールを許可
+    document.querySelectorAll('nav.simple .center').forEach(c=>{
+      const nums = c.querySelector('.nums');
+      if (!nums) return;
+      const needScroll = nums.scrollWidth > c.clientWidth + 1;
+      c.classList.toggle('scroll', needScroll);
+    });
+  }
 
   function scrollTopSmooth(){ window.scrollTo({ top: 0, behavior: 'smooth' }); }
 
@@ -972,6 +823,7 @@ function renderPager(cur, total){
       eagerLoad(eager1);
       setTimeout(()=>eagerLoad(eager2), 600);
     }
+    ensureMobileCenterFits(); // SP中央寄せの最終調整
   }
 
   function setActiveSort(){
@@ -1005,16 +857,12 @@ function renderPager(cur, total){
   function onInputDebounced(el){ el.addEventListener('input', ()=>{ clearTimeout(el._t); el._t=setTimeout(apply,DEBOUNCE); }); }
   [nameQ, codeQ, packQ, rarityQ].forEach(onInputDebounced);
 
-  function closeViewer(){
-    viewer.classList.remove('show');
-    viewerImg.src='';
-    document.body.classList.remove('modal-open');
-  }
+  function closeViewer(){ viewer.classList.remove('show'); viewerImg.src=''; document.body.classList.remove('modal-open'); }
   viewerClose?.addEventListener('click', closeViewer);
   viewer?.addEventListener('click', (e)=>{ if(e.target===viewer) closeViewer(); });
   window.addEventListener('keydown', (e)=>{ if(e.key==='Escape') closeViewer(); });
 
-  window.addEventListener('resize', () => shrinkPrices(document));
+  window.addEventListener('resize', () => { shrinkPrices(document); ensureMobileCenterFits(); });
 
   setActiveSort(); setImgBtn(); apply();
 })();
@@ -1041,7 +889,6 @@ def html_page(title: str, js_source: str, logo_uri: str, cards_json: str) -> str
     parts.append("<div class='actions'>")
     parts.append(f"<a class='iconbtn' href='https://www.climax-card.jp/' target='_blank' rel='noopener'>{shop_svg}<span>Shop</span></a>")
     parts.append(f"<a class='iconbtn' href='https://www.climax-card.jp/member-login' target='_blank' rel='noopener'>{login_svg}<span>Login</span></a>")
-    # X / LINE（見つかったときだけ表示）
     if X_ICON_URI:
         parts.append(
             f"<a class='iconimg iconimg--x' href='https://x.com/climaxcard' target='_blank' rel='noopener'>"
@@ -1070,7 +917,7 @@ def html_page(title: str, js_source: str, logo_uri: str, cards_json: str) -> str
     parts.append("</main>")
 
     parts.append("<script>")
-    parts.append("window.__CARDS__=" + CARDS_JSON + ";")
+    parts.append("window.__CARDS__=" + cards_json + ";")
     parts.append("</script>")
 
     parts.append("<div id='viewer' class='viewer'><div class='vc'><img id='viewerImg' alt=''><button id='viewerClose' class='close'>×</button></div></div>")
