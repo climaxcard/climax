@@ -402,10 +402,11 @@ nav.simple .num[aria-current="page"]{
 }
 nav.simple .ellipsis{border:none;background:transparent;cursor:default;padding:0 4px}
 
-/* SP二段用（上：数字、下：最初/前/次/最後） */
+/* SP二段（上：数字／下：最初・前・次・最後） */
 nav.simple .controls-mobile{ display:none; }
 
 @media (max-width:700px){
+  /* ナビを2行構成に */
   nav.simple .pager{
     display:flex;
     flex-direction:column;
@@ -414,6 +415,7 @@ nav.simple .controls-mobile{ display:none; }
   nav.simple .left,
   nav.simple .right{ display:none; }   /* PC用左右は隠す */
 
+  /* 1行目：数字（横スクロール・折り返しなし） */
   nav.simple .center{
     order:1;
     justify-content:center;
@@ -424,38 +426,24 @@ nav.simple .controls-mobile{ display:none; }
   }
   nav.simple .center::-webkit-scrollbar{ display:none; }
 
+  /* 2行目：最初/前/次/最後（文言そのまま、見切れ防止） */
   nav.simple .controls-mobile{
     order:2;
     display:flex;
     flex-wrap:nowrap;
-    gap:10px;
     justify-content:center;
+    gap:4px;          /* 隙間圧縮 */
+    padding:0 4px;    /* 端の見切れ防止 */
+    max-width:100%;
+    overflow:hidden;
   }
-
-  nav.simple a,
-  nav.simple button{ padding:6px 10px; font-size:12px }
-}
-
-
-/* ===== SPレイアウト調整（ヘッダ2段等） ===== */
-@media (max-width:700px){
-  :root{ --header-h: 144px; }
-  .header-wrap{
-    grid-template-columns:auto 1fr auto;
-    grid-template-areas:
-      "logo title spacer"
-      "actions actions actions";
+  nav.simple .controls-mobile a,
+  nav.simple .controls-mobile button{
+    padding:4px 6px;  /* 余白圧縮 */
+    font-size:11px;   /* 文字微縮 */
+    border-radius:6px;
+    white-space:nowrap;
   }
-  .brand-left img{height:56px}
-  .right-spacer{display:block; grid-area:spacer;}
-  .actions{justify-content:center}
-  .center-ttl{ font-size:clamp(24px, 7vw, 36px) }
-  .wrap{ padding:4px }
-  .grid.grid-img{ gap:2px }
-  .b{padding:6px}
-  .n{font-size:12px}
-  .n .code{font-size:11px;padding:1px 6px;border-radius:6px}
-  .mx{ font-size:clamp(12px, 4.2vw, 16px); white-space:nowrap }
 }
 small.note{color:var(--muted)}
 """
@@ -696,19 +684,19 @@ base_js = r"""
   function renderPager(cur, total){
     const first = (cur>1)
       ? `<a href="#" data-jump="first" class="first">≪ 最初のページ</a>`
-      : `<a class="disabled">≪ 最初のページ</a>`;
+      : `<a class="first disabled">≪ 最初のページ</a>`;
 
     const prev = (cur>1)
       ? `<a href="#" data-jump="prev" class="prev">← 前のページ</a>`
-      : `<a class="disabled">← 前のページ</a>`;
+      : `<a class="prev disabled">← 前のページ</a>`;
 
     const next = (cur<total)
       ? `<a href="#" data-jump="next" class="next">次のページ →</a>`
-      : `<a class="disabled">次のページ →</a>`;
+      : `<a class="next disabled">次のページ →</a>`;
 
     const last = (cur<total)
       ? `<a href="#" data-jump="last" class="last">最後のページ ≫</a>`
-      : `<a class="disabled">最後のページ ≫</a>`;
+      : `<a class="last disabled">最後のページ ≫</a>`;
 
     const nums = buildPageButtons(cur, total).map(item=>{
       if (item.type==='ellipsis') return `<span class="ellipsis">…</span>`;
@@ -757,10 +745,10 @@ base_js = r"""
         if (a.matches('.disabled,[disabled]')) return;
         e.preventDefault();
 
-        if (a.dataset.jump === 'first') { page = 1;      render(); scrollTopSmooth(); return; }
+        if (a.dataset.jump === 'first') { page = 1;                  render(); scrollTopSmooth(); return; }
         if (a.dataset.jump === 'prev')  { page = Math.max(1, page-1); render(); scrollTopSmooth(); return; }
         if (a.dataset.jump === 'next')  { page = Math.min(pages, page+1); render(); scrollTopSmooth(); return; }
-        if (a.dataset.jump === 'last')  { page = pages;  render(); scrollTopSmooth(); return; }
+        if (a.dataset.jump === 'last')  { page = pages;              render(); scrollTopSmooth(); return; }
 
         const p = parseInt(a.dataset.page || '0', 10);
         if (p && p !== page){ page = p; render(); scrollTopSmooth(); }
