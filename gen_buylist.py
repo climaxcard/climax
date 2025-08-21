@@ -1,14 +1,13 @@
 # -*- coding: utf-8 -*-
-r"""
-デュエマ買取表 静的ページ生成（完成版）
+"""
+デュエマ買取表 静的ページ生成（完成版・中央タイトル＋ロゴ・数字タブ＋SPは2行ナビ）
 - CSV/Excel 自動対応。二重ヘッダ(日本語/英語キー)も自動正規化
 - 列は「ヘッダ名優先 → 位置フォールバック(C/E/F/G/H/O/Q)」
 - 画像URLは Q列系（allow_auto_print_label 等）最優先。=IMAGE() 抽出にも対応
-- 画像ON時は「カード名＋型番＋買取価格のみ」（スマホ最適化：型番はバッジ・nowrap）
+- 画像ON時は「カード名＋型番＋買取価格のみ」表示（スマホ最適化：型番はバッジ・nowrap）
 - ロゴは LOGO_FILE 環境変数 or assets/logo.png を最優先で埋め込み（base64）
-- 見出し（スマホ）：1段目=左ロゴ+右タイトル／2段目=Shop/Login/X/LINE アイコン
-- ページネーション：PC=左右(最初/前|次/最後)＋中央(数字)／SP=数字→操作の2行。SPは中央寄せ＆コンパクト
-- カード名のめり込み対策：名前のみ省略（ellipsis）、型番バッジは固定幅
+- 見出しは 2段ヘッダー（PC: 1行 / SP: 2行）。高さはJSで測って被り防止
+- ページネーション：PC=左(最初/前)・中央(数字)・右(次/最後)、SP=数字→最初/前/次/最後の2行
 """
 
 from pathlib import Path
@@ -31,7 +30,7 @@ DEFAULT_EXCEL = "buylist.xlsx"
 ALT_EXCEL     = "data/buylist.xlsx"
 FALLBACK_WINDOWS = r"C:\Users\user\Desktop\デュエマ買取表\buylist.xlsx"
 
-# 入力：CSV/Excel 自動検出
+# 入力は CSV/Excel 自動検出
 EXCEL_PATH = os.getenv("EXCEL_PATH", DEFAULT_EXCEL)
 SHEET_NAME = os.getenv("SHEET_NAME", "シート1")
 
@@ -43,14 +42,7 @@ BUILD_THUMBS = os.getenv("BUILD_THUMBS", "0") == "1"
 # ロゴ（任意）
 LOGO_FILE_ENV = os.getenv("LOGO_FILE", "").strip()
 
-# X/LINE アイコン（任意：環境変数 or 自動探索）
-X_ICON_FILE_ENV    = os.getenv("X_ICON_FILE", "").strip()
-LINE_ICON_FILE_ENV = os.getenv("LINE_ICON_FILE", "").strip()
-
-# 既定で探索するデスクトップのフォルダ
-FIXED_ICON_DIR = Path(r"C:\Users\user\OneDrive\Desktop\デュエマ買取表")
-
-# argvで入力ファイル上書き
+# argvでファイルパス上書き
 if len(sys.argv) > 1 and sys.argv[1]:
     EXCEL_PATH = sys.argv[1]
 
@@ -88,7 +80,7 @@ def find_logo_path():
             pass
     return None
 
-def file_to_data_uri(p: Path|None) -> str:
+def logo_to_data_uri(p: Path|None) -> str:
     if not p: return ""
     mime = mimetypes.guess_type(str(p))[0] or "image/png"
     try:
@@ -97,34 +89,9 @@ def file_to_data_uri(p: Path|None) -> str:
     except Exception:
         return ""
 
-LOGO_URI = file_to_data_uri(find_logo_path())
+LOGO_URI = logo_to_data_uri(find_logo_path())
 
-# ---- X/LINE 画像探索 ----
-def find_icon_path(env_path: str, default_names: list[str]):
-    cands = []
-    if env_path:
-        cands.append(Path(env_path))
-    cands += [Path("assets") / n for n in default_names]
-    cands += [Path(os.getcwd()) / n for n in default_names]
-    try:
-        here = Path(__file__).parent
-        cands += [here / "assets" / n for n in default_names]
-        cands += [here / n for n in default_names]
-    except NameError:
-        pass
-    cands += [FIXED_ICON_DIR / n for n in default_names]
-    for p in cands:
-        try:
-            if p.exists() and p.is_file():
-                return p
-        except Exception:
-            pass
-    return None
-
-X_ICON_URI    = file_to_data_uri(find_icon_path(X_ICON_FILE_ENV,    ["X.png", "x.png", "x-logo.png"]))
-LINE_ICON_URI = file_to_data_uri(find_icon_path(LINE_ICON_FILE_ENV, ["LINE.png", "line.png", "line-icon.png"]))
-
-# ========= 入力ファイル 読み込み・正規化 =========
+# ========= 入力ファイル 読み込み・正規化（CSV/Excel自動対応） =========
 def _read_csv_auto(path: Path) -> pd.DataFrame:
     for enc in ("utf-8-sig", "cp932", "utf-8"):
         try:
@@ -134,6 +101,7 @@ def _read_csv_auto(path: Path) -> pd.DataFrame:
     return pd.read_csv(path)
 
 def _normalize_two_header_layout(df: pd.DataFrame) -> pd.DataFrame:
+    """二重ヘッダ（2行見出し→英語キー行→データ）を、英語キー行を正式ヘッダに整える。"""
     try:
         cand = []
         m = min(12, len(df))
@@ -338,18 +306,14 @@ def build_payload(df: pd.DataFrame) -> tuple[str,str]:
 
 CARDS_VER, CARDS_JSON = build_payload(df)
 
-# ========= 見た目 =========
+# ========= 見た目（PC=1行／SP=2行） =========
 base_css = """
 *{box-sizing:border-box}
 :root{
   --bg:#ffffff; --panel:#ffffff; --border:#e5e7eb; --accent:#e11d48;
   --text:#111111; --muted:#6b7280; --header-h: 120px;
 }
-body{
-  margin:0;color:var(--text);background:var(--bg);
-  font-family:Inter,system-ui,'Noto Sans JP',sans-serif;
-  padding-top: calc(var(--header-h) + 8px); /* ← ヘッダー被り保険 */
-}
+body{ margin:0;color:var(--text);background:var(--bg);font-family:Inter,system-ui,'Noto Sans JP',sans-serif; padding-top: var(--header-h); }
 
 /* === header === */
 header{
@@ -357,38 +321,25 @@ header{
   padding:10px 16px; box-shadow:0 2px 10px rgba(0,0,0,.04);
 }
 .header-wrap{
-  max-width:1080px;margin:0 auto;display:grid;gap:8px;width:100%;
+  max-width:1200px;margin:0 auto;display:grid;gap:8px;width:100%;
   grid-template-columns:auto 1fr auto;
   grid-template-areas: "logo title actions";
   align-items:center;
 }
 .brand-left{grid-area:logo;display:flex;align-items:center;gap:12px;min-width:0}
 .brand-left img{height:80px;display:block}
-
 .center-ttl{
-  grid-area:title; font-weight:1000; text-align:left;
-  font-size:clamp(28px, 5vw, 48px); line-height:1.05; color:#111;
-  white-space:normal; writing-mode:horizontal-tb !important; text-orientation:mixed !important;
-  word-break:keep-all;
+  grid-area:title; font-weight:1000; text-align:center;
+  font-size:clamp(28px, 5.2vw, 52px); line-height:1.05; color:#111;
+  writing-mode: horizontal-tb; 
+  text-orientation: mixed;
+  white-space: normal;
 }
-
 .right-spacer{display:none}
 .actions{grid-area:actions;display:flex;align-items:center;gap:10px;justify-content:flex-end}
-.iconbtn{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--border);background:#fff;color:#111;border-radius:12px;padding:8px 10px;text-decoration:none;font-size:13px;transition:transform .12s ease, background .12s ease}
+.iconbtn{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--border);background:#fff;color:#111;border-radius:12px;padding:9px 12px;text-decoration:none;font-size:13px;transition:transform .12s ease, background .12s ease}
 .iconbtn:hover{background:#f9fafb; transform:translateY(-1px)}
 .iconbtn svg{width:16px;height:16px;display:block;color:#111}
-
-/* X/LINE 画像アイコン */
-.iconimg{
-  display:inline-flex;align-items:center;justify-content:center;
-  border:1px solid var(--border);background:#fff;color:#111;
-  border-radius:12px;text-decoration:none;overflow:hidden;
-  transition:transform .12s ease, background .12s ease; line-height:0;
-}
-.iconimg:hover{ background:#f9fafb; transform:translateY(-1px); }
-.iconimg--x, .iconimg--line{ width:32px; height:32px; padding:0; }
-.iconimg--x img{    display:block; width:118%; height:118%; object-fit:cover; }
-.iconimg--line img{ display:block; width:145%; height:145%; object-fit:cover; }
 
 /* === layout === */
 .wrap{max-width:1200px;margin:0 auto;padding:12px 16px}
@@ -402,16 +353,17 @@ header{
 #packQ{grid-area:q3}
 #rarityQ{grid-area:q4}
 .controls .btns{ grid-area:acts; display:flex; gap:8px; flex-wrap:wrap }
-input.search{background:#fff;border:1px solid var(--border);color:#111;border-radius:12px;padding:10px 12px;font-size:14px;outline:none;min-width:0;transition:box-shadow .12s ease;width:100%}
+
+input.search{background:#fff;border:1px solid var(--border);color:#111;border-radius:12px;padding:11px 12px;font-size:14px;outline:none;min-width:0;transition:box-shadow .12s ease;width:100%}
 input.search::placeholder{color:#9ca3af}
 input.search:focus{ box-shadow:0 0 0 2px rgba(17,24,39,.08) }
-.btn{background:#fff;border:1px solid var(--border);color:#111;border-radius:10px;padding:8px 10px;font-size:13px;cursor:pointer;text-decoration:none;white-space:nowrap;transition:transform .12s ease, background .12s ease}
+.btn{background:#fff;border:1px solid var(--border);color:#111;border-radius:12px;padding:9px 12px;font-size:13px;cursor:pointer;text-decoration:none;white-space:nowrap;transition:transform .12s ease, background .12s ease}
 .btn:hover{background:#f9fafb; transform:translateY(-1px)}
 .btn.active{outline:2px solid var(--accent)}
 
 /* === cards === */
 .grid{margin:12px 0;width:100%}
-.grid.grid-img{display:grid;grid-template-columns:repeat(4, minmax(0,1fr));gap:12px} /* PC/スマホとも4列 */
+.grid.grid-img{display:grid;grid-template-columns:repeat(4, minmax(0,1fr));gap:12px}
 .grid.grid-list{display:grid;grid-template-columns:repeat(2, minmax(0,1fr));gap:12px}
 .card{
   background:var(--panel);border:1px solid var(--border);border-radius:14px;overflow:hidden;box-shadow:0 4px 10px rgba(0,0,0,.04);transition:transform .15s ease, box-shadow .15s ease;
@@ -421,92 +373,128 @@ input.search:focus{ box-shadow:0 0 0 2px rgba(17,24,39,.08) }
 .th img{width:100%;height:100%;object-fit:cover;display:block;background:#f3f4f6}
 .b{padding:10px 12px}
 
-/* カード名の“めり込み”対策（名前だけ省略、バッジは固定） */
-.n{font-size:14px;font-weight:800;line-height:1.25;margin:0 0 6px;color:#111;display:flex;gap:6px;align-items:baseline;flex-wrap:nowrap;min-width:0}
-.n .tt{flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
-.n .code{flex:0 0 auto; margin-left:0;font-weight:700;font-size:12px;color:#374151;background:#f3f4f6;border:1px solid #e5e7eb;border-radius:8px;padding:2px 6px;white-space:nowrap}
+.n{font-size:14px;font-weight:800;line-height:1.25;margin:0 0 6px;color:#111;display:flex;gap:6px;align-items:baseline;flex-wrap:wrap;word-break:break-word}
+.n .code{margin-left:0;font-weight:700;font-size:12px;color:#374151;background:#f3f4f6;border:1px solid #e5e7eb;border-radius:8px;padding:2px 6px;white-space:nowrap}
 
 .meta{font-size:11px;color:var(--muted);word-break:break-word}
 .p{margin-top:6px;display:flex;flex-wrap:wrap}
-.mx{font-weight:1000;color:var(--accent);font-size:clamp(16px, 2.2vw, 22px);line-height:1.05;text-shadow:none;white-space:nowrap;display:inline-block;max-width:100%}
+.mx{font-weight:1000;color:var(--accent);font-size:clamp(16px, 2.4vw, 22px);line-height:1.05;text-shadow:none;white-space:nowrap;display:inline-block;max-width:100%}
 .grid.grid-img .meta{display:none}
 
 /* === 画像ビューワ（オーバーレイ）=== */
-.viewer{ position: fixed; inset: 0; background: rgba(0,0,0,.86); display: none; align-items: center; justify-content: center; z-index: 2000; }
+.viewer{
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.86);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+}
 .viewer.show{ display: flex; }
 .viewer .vc{ position: relative; max-width: 92vw; max-height: 92vh; }
-.viewer img{ display:block; max-width:92vw; max-height:92vh; width:auto; height:auto; object-fit:contain; }
-.viewer button.close{ position:absolute; top:-12px; right:-12px; background:#fff; border:1px solid var(--border); color:#111; border-radius:999px; width:38px; height:38px; cursor:pointer; }
+.viewer img{
+  display:block; max-width:92vw; max-height:92vh; width:auto; height:auto; object-fit:contain;
+}
+.viewer button.close{
+  position:absolute; top:-12px; right:-12px; background:#fff; border:1px solid var(--border); color:#111;
+  border-radius:999px; width:38px; height:38px; cursor:pointer;
+}
+/* ビューワ表示中は背面スクロール停止 */
 body.modal-open{ overflow:hidden; }
 
-/* ===== ページネーション（共通の見た目） ===== */
-/* ===== ページネーション（共通の見た目：PCで中央を厳密に） ===== */
+/* ===== ページネーション（PC=左/中央/右、SP=2行） ===== */
 nav.simple{ margin:14px 0; }
 nav.simple .pager{
-  /* ← 左右を 1fr にして中央カラムを auto にすることで、
-       左右の幅に関係なく「中央」が本当に中央に来ます */
   display:grid;
-  grid-template-columns: 1fr auto 1fr;
+  grid-template-columns:auto 1fr auto; /* 左 / 中央 / 右 */
   align-items:center;
-  gap:8px;
+  gap:12px;
 }
 nav.simple .left,
 nav.simple .center,
 nav.simple .right{
   display:flex; align-items:center; gap:8px; flex-wrap:wrap;
 }
-
-/* 左ブロックは右寄せ、右ブロックは左寄せ（中央を圧迫しない） */
-nav.simple .left  { justify-content:flex-end; }
 nav.simple .center{ justify-content:center; }
-nav.simple .right { justify-content:flex-start; }
 
 nav.simple a, nav.simple button{
   color:#111;background:#fff;border:1px solid var(--border);
-  padding:5px 10px;border-radius:10px;text-decoration:none;white-space:nowrap;font-size:13px;line-height:1;cursor:pointer
+  padding:6px 12px;border-radius:10px;text-decoration:none;
+  white-space:nowrap;font-size:13px;line-height:1;cursor:pointer
 }
 nav.simple a.disabled{opacity:.45;pointer-events:none}
-nav.simple .num[aria-current="page"]{ background:#111;color:#fff;border-color:#111;cursor:default }
-nav.simple .ellipsis{border:none;background:transparent;cursor:default;padding:0 2px}
+nav.simple .num[aria-current="page"]{
+  background:#111;color:#fff;border-color:#111;cursor:default
+}
+nav.simple .ellipsis{border:none;background:transparent;cursor:default;padding:0 4px}
 
-/* デフォルトはモバイル用の2段目(.controls-mobile)を隠す */
+/* SP二段（上：数字／下：最初・前・次・最後） */
 nav.simple .controls-mobile{ display:none; }
 
-/* ======== スマホ最適化（ここは既存のままでOK。必要な行だけ再掲） ======== */
+/* ======== SP 調整 ======== */
 @media (max-width:700px){
-  /* 2段構成：上=数字、下=最初/前/次/最後（中央寄せ） */
-  nav.simple .pager{ display:flex; flex-direction:column; align-items:stretch; gap:6px; }
+  nav.simple .pager{
+    display:flex; flex-direction:column; gap:6px;
+  }
+  nav.simple .left, nav.simple .right{ display:none; } /* PC用左右は隠す */
+
+  /* 数字：横スクロール＋端見切れ防止 */
   nav.simple .center{
-    order:1; display:flex; justify-content:center; align-items:center;
-    gap:4px; flex-wrap:nowrap; margin:0 auto; padding:0 6px;
-    max-width:100%; white-space:nowrap; overflow:hidden;
+    order:1; justify-content:center; flex-wrap:nowrap; overflow-x:auto; max-width:100%;
+    -webkit-overflow-scrolling: touch;
+    padding-inline:10px;             /* 端の数字が切れない */
+    scroll-padding-inline:10px;      /* スクロール末端での見切れ防止 */
+    gap:6px;
   }
-  nav.simple .center.scroll{ overflow-x:auto; -webkit-overflow-scrolling:touch; }
-  nav.simple .center .num, nav.simple .center .ellipsis{
-    flex:0 0 auto; min-width:28px; height:28px; padding:0 8px; font-size:12px; line-height:28px; border-radius:8px;
-  }
+  nav.simple .center::-webkit-scrollbar{ display:none; }
+  nav.simple .center .num,
+  nav.simple .center .ellipsis{ flex:0 0 auto; }
+
+  /* 2行目：最初/前/次/最後（文言変更なし / 見切れ防止） */
   nav.simple .controls-mobile{
-    order:2; display:flex; justify-content:center; align-items:center;
-    gap:4px; flex-wrap:nowrap; margin:0 auto; padding:0 6px; max-width:100%; white-space:nowrap; overflow:hidden;
+    order:2; display:flex; flex-wrap:nowrap; justify-content:center;
+    gap:4px; padding:0 6px; max-width:100%; overflow:hidden;
   }
-  /* PC用の左右ブロックはスマホでは非表示 */
-  nav.simple .left, nav.simple .right{ display:none; }
+  nav.simple .controls-mobile a,
+  nav.simple .controls-mobile button{
+    padding:4px 6px; font-size:11px; border-radius:6px; white-space:nowrap;
+  }
 }
+
+/* ===== SPレイアウト（ヘッダ2段等） ===== */
+@media (max-width:700px){
+  :root{ --header-h: 144px; }
+  .header-wrap{
+    grid-template-columns:auto 1fr auto;
+    grid-template-areas:
+      "logo title spacer"
+      "actions actions actions";
+  }
+  .brand-left img{height:56px}
+  .right-spacer{display:block; grid-area:spacer;}
+  .actions{justify-content:center}
+  .center-ttl{ font-size:clamp(24px, 7vw, 36px) }
+  .wrap{ padding:4px }
+  .grid.grid-img{ gap:2px }
+  .b{padding:6px}
+  .n{font-size:12px}
+  .n .code{font-size:11px;padding:1px 6px;border-radius:6px}
+  .mx{ font-size:clamp(12px, 4.2vw, 16px); white-space:nowrap }
+}
+small.note{color:var(--muted)}
 """
 
 # ========= JS =========
 base_js = r"""
 (function(){
-  // ヘッダ高さを CSS 変数に反映
   const header = document.querySelector('header');
   const setHeaderH = () => {
-    const h = header?.getBoundingClientRect().height || 144;
-    document.documentElement.style.setProperty('--header-h', Math.ceil(h) + 'px');
+    const h = header?.offsetHeight || 144;
+    document.documentElement.style.setProperty('--header-h', h + 'px');
   };
   setHeaderH();
-  ['resize','load'].forEach(ev=>window.addEventListener(ev, setHeaderH));
-  document.querySelectorAll('header img').forEach(img => { if (!img.complete) img.addEventListener('load', setHeaderH); });
-  if ('ResizeObserver' in window && header) new ResizeObserver(setHeaderH).observe(header);
+  window.addEventListener('resize', setHeaderH);
 
   const nameQ  = document.getElementById('nameQ');
   const codeQ  = document.getElementById('codeQ');
@@ -532,7 +520,9 @@ base_js = r"""
   const __PER = __PER_PAGE__;
   const PER_PAGE_ADJ = (isMobile || slowNet || cores <= 4) ? Math.min(__PER, 48) : __PER;
 
-  function pick(nLo, nMd, nHi){ return (cores <= 4) ? nLo : ((isMobile || slowNet) ? nMd : nHi); }
+  function pick(nLo, nMd, nHi){
+    return (cores <= 4) ? nLo : ((isMobile || slowNet) ? nMd : nHi);
+  }
   const eager1 = pick(4, 8, 16);
   const eager2 = pick(8, 16, 32);
 
@@ -541,7 +531,8 @@ base_js = r"""
   let saved = localStorage.getItem('showImages');
   if (saved === 'true')  { localStorage.setItem('showImages','1'); saved = '1'; }
   if (saved === 'false') { localStorage.setItem('showImages','0'); saved = '0'; }
-  showImages = (saved === null) ? true : (saved === '1');
+  if (saved === null) showImages = true;
+  else showImages = (saved === '1');
 
   const SEP_RE = /[\s\u30FB\u00B7·/／\-_—–−]+/g;
   function kataToHira(str){ return (str||'').replace(/[\u30A1-\u30FA]/g, ch => String.fromCharCode(ch.charCodeAt(0)-0x60)); }
@@ -563,7 +554,9 @@ base_js = r"""
   }
 
   function fmtYen(n){ return (n==null||n==='')?'-':('¥'+parseInt(n,10).toLocaleString()); }
-  function escHtml(s){ return (s||'').replace(/[&<>\"']/g, m => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", "\"":"&quot;", "'":"&#39;" }[m])); }
+  function escHtml(s){
+    return (s||'').replace(/[&<>\"']/g, m => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", "\"":"&quot;", "'":"&#39;" }[m]));
+  }
 
   function norm(it){
     return {
@@ -613,7 +606,6 @@ base_js = r"""
     });
   }
 
-  // --- カードHTML ---
   function cardHTML_img(it){
     const nameEsc = escHtml(it.name||'');
     const full = it.image||'';
@@ -631,7 +623,7 @@ base_js = r"""
            onerror="this.onerror=null;var p=this.closest('.th');this.src=p?p.getAttribute('data-full'):this.src;">
     </div>
     <div class="b">
-      <h3 class="n"><span class="tt">${nameEsc}</span>${codeHtml}</h3>
+      <h3 class="n">${nameEsc}${codeHtml}</h3>
       <div class="p"><span class="mx">${fmtYen(it.price)}</span></div>
     </div>
   </article>`;
@@ -643,7 +635,7 @@ base_js = r"""
     return `
   <article class="card">
     <div class="b">
-      <h3 class="n"><span class="tt">${nameEsc}</span></h3>
+      <h3 class="n">${nameEsc}</h3>
       <div class="meta">${escHtml(meta)}</div>
       <div class="p"><span class="mx">${fmtYen(it.price)}</span></div>
     </div>
@@ -705,7 +697,7 @@ base_js = r"""
     page=1; render();
   }
 
-  // ページ番号（PC:前後3 / SP:前後2）
+  // ページ番号：PC=前後3 / SP=前後2
   function buildPageButtons(cur, total){
     const around = matchMedia('(max-width: 700px)').matches ? 2 : 3;
     const btns = [];
@@ -724,11 +716,24 @@ base_js = r"""
     return btns;
   }
 
+  // PC：左(最初/前) | 中央(数字) | 右(次/最後)
+  // SP：上(数字) / 下(最初 前 次 最後)
   function renderPager(cur, total){
-    const first = (cur>1)  ? `<a href="#" data-jump="first" class="first">≪ 最初のページ</a>` : `<a class="disabled">≪ 最初のページ</a>`;
-    const prev  = (cur>1)  ? `<a href="#" data-jump="prev"  class="prev">← 前のページ</a>` : `<a class="disabled">← 前のページ</a>`;
-    const next  = (cur<total) ? `<a href="#" data-jump="next"  class="next">次のページ →</a>` : `<a class="disabled">次のページ →</a>`;
-    const last  = (cur<total) ? `<a href="#" data-jump="last"  class="last">最後のページ ≫</a>` : `<a class="disabled">最後のページ ≫</a>`;
+    const first = (cur>1)
+      ? `<a href="#" data-jump="first" class="first">≪ 最初のページ</a>`
+      : `<a class="disabled">≪ 最初のページ</a>`;
+
+    const prev = (cur>1)
+      ? `<a href="#" data-jump="prev" class="prev">← 前のページ</a>`
+      : `<a class="disabled">← 前のページ</a>`;
+
+    const next = (cur<total)
+      ? `<a href="#" data-jump="next" class="next">次のページ →</a>`
+      : `<a class="disabled">次のページ →</a>`;
+
+    const last = (cur<total)
+      ? `<a href="#" data-jump="last" class="last">最後のページ ≫</a>`
+      : `<a class="disabled">最後のページ ≫</a>`;
 
     const nums = buildPageButtons(cur, total).map(item=>{
       if (item.type==='ellipsis') return `<span class="ellipsis">…</span>`;
@@ -741,21 +746,11 @@ base_js = r"""
     return `
       <div class="pager">
         <div class="left">${first} ${prev}</div>
-        <div class="center"><span class="nums">${nums}</span></div>
+        <div class="center">${nums}</div>
         <div class="right">${next} ${last}</div>
         <div class="controls-mobile">${first} ${prev} ${next} ${last}</div>
       </div>
     `;
-  }
-
-  function ensureMobileCenterFits(){
-    // 数字行が収まらない場合だけ、横スクロールを許可
-    document.querySelectorAll('nav.simple .center').forEach(c=>{
-      const nums = c.querySelector('.nums');
-      if (!nums) return;
-      const needScroll = nums.scrollWidth > c.clientWidth + 1;
-      c.classList.toggle('scroll', needScroll);
-    });
   }
 
   function scrollTopSmooth(){ window.scrollTo({ top: 0, behavior: 'smooth' }); }
@@ -773,10 +768,10 @@ base_js = r"""
       grid.querySelectorAll('.th').forEach(th=>{
         th.addEventListener('click', ()=>{
           const src = th.getAttribute('data-full') || th.querySelector('img')?.src || '';
-          if(!src) return;
-          viewerImg.src = src;
+          if(!src) return; 
+          viewerImg.src = src; 
           viewer.classList.add('show');
-          document.body.classList.add('modal-open');
+          document.body.classList.add('modal-open');   // ← 追加：背面スクロール停止
         });
       });
     }
@@ -806,7 +801,6 @@ base_js = r"""
       eagerLoad(eager1);
       setTimeout(()=>eagerLoad(eager2), 600);
     }
-    ensureMobileCenterFits(); // SP中央寄せの最終調整
   }
 
   function setActiveSort(){
@@ -840,12 +834,16 @@ base_js = r"""
   function onInputDebounced(el){ el.addEventListener('input', ()=>{ clearTimeout(el._t); el._t=setTimeout(apply,DEBOUNCE); }); }
   [nameQ, codeQ, packQ, rarityQ].forEach(onInputDebounced);
 
-  function closeViewer(){ viewer.classList.remove('show'); viewerImg.src=''; document.body.classList.remove('modal-open'); }
+  function closeViewer(){
+    viewer.classList.remove('show');
+    viewerImg.src='';
+    document.body.classList.remove('modal-open');  // ← 追加：スクロール再開
+  }
   viewerClose?.addEventListener('click', closeViewer);
   viewer?.addEventListener('click', (e)=>{ if(e.target===viewer) closeViewer(); });
   window.addEventListener('keydown', (e)=>{ if(e.key==='Escape') closeViewer(); });
 
-  window.addEventListener('resize', () => { shrinkPrices(document); ensureMobileCenterFits(); });
+  window.addEventListener('resize', () => shrinkPrices(document));
 
   setActiveSort(); setImgBtn(); apply();
 })();
@@ -853,7 +851,7 @@ base_js = r"""
 
 # ===== HTML =====
 def html_page(title: str, js_source: str, logo_uri: str, cards_json: str) -> str:
-    shop_svg = "<svg viewBox='0 0 24 24' aria-hidden='true' fill='currentColor'><path d='M3 9.5V8l2.2-3.6c.3-.5.6-.7 1-.7h11.6c.4 0 .7.2 .9 .6L21 8v1.5c0 1-.8 1.8-1.8 1.8-.9 0-1.6-.6-1.8-1.4-.2 .8-.9 1.4-1.8 1.4s-1.6-.6-1.8-1.4c-.2 .8-.9 1.4-1.8 1.4C3.8 11.3 3 10.5 3 9.5zM5 12.5h14V20c0 .6-.4 1-1 1H6c-.6 0-1-.4-1-1v-7.5zm4 1.5v5h6v-5H9zM6.3 5.2 5 7.5h14l-1.3-2.3H6.3z'/></svg>"
+    shop_svg = "<svg viewBox='0 0 24 24' aria-hidden='true' fill='currentColor'><path d='M3 9.5V8l2.2-3.6c.3-.5.6-.7 1-.7h11.6c.4 0 .7.2 .9 .6L21 8v1.5c0 1-.8 1.8-1.8 1.8-.9 0-1.6-.6-1.8-1.4-.2 .8-.9 1.4-1.8 1.4s-1.6-.6-1.8-1.4c-.2 .8-.9 1.4-1.8 1.4s-1.6-.6-1.8-1.4c-.2 .8-.9 1.4-1.8 1.4C3.8 11.3 3 10.5 3 9.5zM5 12.5h14V20c0 .6-.4 1-1 1H6c-.6 0-1-.4-1-1v-7.5zm4 1.5v5h6v-5H9zM6.3 5.2 5 7.5h14l-1.3-2.3H6.3z'/></svg>"
     login_svg= "<svg viewBox='0 0 24 24' aria-hidden='true' fill='currentColor'><path d='M12 12a5 5 0 1 0-5-5 5 5 0 0 0 5 5zm0 2c-4.418 0-8 2.239-8 5v2h16v-2c0-2.761-3.582-5-8-5z'/></svg>"
 
     parts = []
@@ -872,16 +870,6 @@ def html_page(title: str, js_source: str, logo_uri: str, cards_json: str) -> str
     parts.append("<div class='actions'>")
     parts.append(f"<a class='iconbtn' href='https://www.climax-card.jp/' target='_blank' rel='noopener'>{shop_svg}<span>Shop</span></a>")
     parts.append(f"<a class='iconbtn' href='https://www.climax-card.jp/member-login' target='_blank' rel='noopener'>{login_svg}<span>Login</span></a>")
-    if X_ICON_URI:
-        parts.append(
-            f"<a class='iconimg iconimg--x' href='https://x.com/climaxcard' target='_blank' rel='noopener'>"
-            f"<img src='{X_ICON_URI}' alt='X'></a>"
-        )
-    if LINE_ICON_URI:
-        parts.append(
-            f"<a class='iconimg iconimg--line' href='https://line.me/R/ti/p/@512nwjvn' target='_blank' rel='noopener'>"
-            f"<img src='{LINE_ICON_URI}' alt='LINE'></a>"
-        )
     parts.append("</div></div></header>")
     parts.append("<main class='wrap'>")
     parts.append("<div class='controls'>")
@@ -930,6 +918,4 @@ write_mode("price_asc",  "'asc'",  "デュエマ買取表（price_asc）")
 print(f"[*] Excel/CSV: {EXCEL_PATH!r}")
 print(f"[*] PER_PAGE={PER_PAGE}  BUILD_THUMBS={'1' if BUILD_THUMBS else '0'}")
 print(f"[LOGO] {'embedded' if LOGO_URI else 'not found (fallback text used)'}")
-print(f"[X ICON] {'embedded' if X_ICON_URI else 'not found'}")
-print(f"[LINE ICON] {'embedded' if LINE_ICON_URI else 'not found'}")
 print(f"[OK] 生成完了 → {OUT_DIR.resolve()} / 総件数{len(df)}")
