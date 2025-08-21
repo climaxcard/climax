@@ -138,7 +138,36 @@ nav.simple .controls-mobile{ display:none !important; }
 
 
 /* ======== スマホ専用：ヘッダー2段＆ページャ行をよりコンパクト ======== */
+/* --- スマホ：カード名が見えない/埋もれる対策 --- */
 @media (max-width:700px){
+  /* タイトル行は折り返し許可＋コードは2行目へ */
+  .n{ 
+    display:flex;
+    flex-wrap:wrap !important;      /* ← 1行固定を解除 */
+    align-items:flex-start !important;
+  }
+  .n .ttl{
+    flex: 1 1 100% !important;      /* ← タイトルを行全幅に */
+    min-width: 0 !important;
+    display: -webkit-box !important;
+    -webkit-box-orient: vertical !important;
+    -webkit-line-clamp: 2 !important;/* ← 最大2行表示 */
+    overflow: hidden !important;
+
+    /* 折り返し優先（Safariでも確実に改行） */
+    white-space: normal !important;
+    word-break: break-word !important;
+    overflow-wrap: anywhere !important;
+  }
+  .n .code{
+    order: 2 !important;            /* ← タイトルの次の行に回す */
+    margin-top: 2px !important;
+  }
+
+  /* 価格の可読性は維持しつつ微縮小（はみ出し防止） */
+  .mx{ font-size: clamp(12px, 4vw, 16px) !important; }
+}
+
   :root{ --header-h: 144px; }
 
   /* ヘッダー：1段目=ロゴ+タイトル / 2段目=アクション */
