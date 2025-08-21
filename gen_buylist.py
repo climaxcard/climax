@@ -423,14 +423,40 @@ input.search:focus{ box-shadow:0 0 0 2px rgba(17,24,39,.08) }
 body.modal-open{ overflow:hidden; }
 
 /* ===== ページネーション（PC=左/中央/右、SP=数字+操作） ===== */
+/* ===== ページネーション（PC=左/中央/右、SP=数字+操作） ===== */
 nav.simple{ margin:14px 0; }
-nav.simple .pager{ display:grid; grid-template-columns:auto 1fr auto; align-items:center; gap:12px; }
-nav.simple .left, nav.simple .center, nav.simple .right{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
-nav.simple .center{ justify-content:center; }
-nav.simple a, nav.simple button{ color:#111;background:#fff;border:1px solid var(--border); padding:6px 12px;border-radius:10px;text-decoration:none;white-space:nowrap;font-size:13px;line-height:1;cursor:pointer }
+nav.simple .pager{
+  /* ← 左右を同じ1fr/中央autoにして “ど真ん中” を保証 */
+  display:grid; 
+  grid-template-columns: 1fr auto 1fr;
+  align-items:center; 
+  gap:12px;
+}
+nav.simple .left, 
+nav.simple .center, 
+nav.simple .right{
+  display:flex; 
+  align-items:center; 
+  gap:8px; 
+  flex-wrap:wrap;
+}
+nav.simple .left{  justify-content:flex-start; }
+nav.simple .center{justify-content:center; } /* ← 中央コンテンツを中央寄せ */
+nav.simple .right{ justify-content:flex-end; }
+
+nav.simple a, nav.simple button{
+  color:#111;background:#fff;border:1px solid var(--border);
+  padding:6px 12px;border-radius:10px;text-decoration:none;white-space:nowrap;font-size:13px;line-height:1;cursor:pointer
+}
 nav.simple a.disabled{opacity:.45;pointer-events:none}
 nav.simple .num[aria-current="page"]{ background:#111;color:#fff;border-color:#111;cursor:default }
 nav.simple .ellipsis{border:none;background:transparent;cursor:default;padding:0 4px}
+
+/* PCで “controls-mobile” が見えないように明示（保険） */
+nav.simple .controls-mobile{ display:none !important; }
+
+/* ======== スマホ専用は今まで通り（@media (max-width:700px) にあるやつそのまま） ======== */
+
 
 /* ======== スマホ専用：ヘッダー2段＆ページャ行をよりコンパクト ======== */
 @media (max-width:700px){
@@ -528,16 +554,16 @@ base_js = r"""
   const viewerImg = document.getElementById('viewerImg');
   const viewerClose = document.getElementById('viewerClose');
 
-  const isMobile = matchMedia('(max-width: 700px)').matches;
+  const isMobileConst = matchMedia('(max-width: 700px)').matches;
   const netType = navigator.connection?.effectiveType || '';
   const slowNet = /^(slow-2g|2g|3g)$/i.test(netType);
   const cores = navigator.hardwareConcurrency || 4;
 
   const __PER = __PER_PAGE__;
-  const PER_PAGE_ADJ = (isMobile || slowNet || cores <= 4) ? Math.min(__PER, 48) : __PER;
+  const PER_PAGE_ADJ = (isMobileConst || slowNet || cores <= 4) ? Math.min(__PER, 48) : __PER;
 
   function pick(nLo, nMd, nHi){
-    return (cores <= 4) ? nLo : ((isMobile || slowNet) ? nMd : nHi);
+    return (cores <= 4) ? nLo : ((isMobileConst || slowNet) ? nMd : nHi);
   }
   const eager1 = pick(4, 8, 16);
   const eager2 = pick(8, 16, 32);
@@ -673,7 +699,7 @@ base_js = r"""
           io.unobserve(img);
         }
       });
-    }, { rootMargin: (isMobile || slowNet) ? "300px 0px" : "600px 0px", threshold: 0.01 });
+    }, { rootMargin: (isMobileConst || slowNet) ? "300px 0px" : "600px 0px", threshold: 0.01 });
 
     document.querySelectorAll('#grid img[data-src]').forEach(img=>io.observe(img));
     document.querySelectorAll('#grid img').forEach((img, i)=>{ img.setAttribute('fetchpriority', i < 8 ? 'high' : 'low'); });
@@ -734,7 +760,7 @@ base_js = r"""
     return btns;
   }
 
-  function renderPager(cur, total){
+  function renderPager(cur, total, isMobile){
     const first = (cur>1)  ? `<a href="#" data-jump="first" class="first">≪ 最初のページ</a>` : `<a class="disabled">≪ 最初のページ</a>`;
     const prev  = (cur>1)  ? `<a href="#" data-jump="prev"  class="prev">← 前のページ</a>` : `<a class="disabled">← 前のページ</a>`;
     const next  = (cur<total) ? `<a href="#" data-jump="next"  class="next">次のページ →</a>` : `<a class="disabled">次のページ →</a>`;
@@ -748,12 +774,14 @@ base_js = r"""
         : `<a class="num" href="#" data-page="${p}" aria-label="ページ ${p}">${p}</a>`;
     }).join(' ');
 
+    const mobileRow = isMobile ? `<div class="controls-mobile">${first} ${prev} ${next} ${last}</div>` : '';
+
     return `
       <div class="pager">
         <div class="left">${first} ${prev}</div>
         <div class="center">${nums}</div>
         <div class="right">${next} ${last}</div>
-        <div class="controls-mobile">${first} ${prev} ${next} ${last}</div>
+        ${mobileRow}
       </div>
     `;
   }
@@ -762,11 +790,13 @@ base_js = r"""
 
   function render(){
     grid.className = showImages ? 'grid grid-img' : 'grid grid-list';
+
     const total=VIEW.length;
     const pages=Math.max(1, Math.ceil(total/PER_PAGE_ADJ));
     if(page>pages) page=pages;
     const start=(page-1)*PER_PAGE_ADJ;
     const rows=VIEW.slice(start, start+PER_PAGE_ADJ);
+
     grid.innerHTML = rows.map(showImages ? cardHTML_img : cardHTML_list).join('');
 
     if(showImages){
@@ -781,7 +811,8 @@ base_js = r"""
       });
     }
 
-    const pagerHtml = renderPager(page, pages);
+    const isMobileNow = window.matchMedia('(max-width: 700px)').matches;
+    const pagerHtml = renderPager(page, pages, isMobileNow);
     navs.forEach(n=>{
       n.innerHTML = pagerHtml;
       n.onclick = (e)=>{
@@ -835,7 +866,7 @@ base_js = r"""
   btnNone?.addEventListener('click', ()=>{ currentSort = null; setActiveSort(); apply(); });
   btnImg ?.addEventListener('click', toggleImages);
 
-  const DEBOUNCE = (isMobile || slowNet || cores <= 4) ? 240 : 120;
+  const DEBOUNCE = (isMobileConst || slowNet || cores <= 4) ? 240 : 120;
   function onInputDebounced(el){ el.addEventListener('input', ()=>{ clearTimeout(el._t); el._t=setTimeout(apply,DEBOUNCE); }); }
   [nameQ, codeQ, packQ, rarityQ].forEach(onInputDebounced);
 
@@ -853,6 +884,7 @@ base_js = r"""
   setActiveSort(); setImgBtn(); apply();
 })();
 """
+
 
 # ===== HTML =====
 def html_page(title: str, js_source: str, logo_uri: str, cards_json: str) -> str:
