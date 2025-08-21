@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-デュエマ買取表 静的ページ生成（完成版・中央タイトル＋ロゴ assets/logo.png 対応）
+デュエマ買取表 静的ページ生成（完成版・中央タイトル＋ロゴ assets/logo.png 対応・数字タブ付ページネーション）
 - CSV/Excel 自動対応。二重ヘッダ(日本語/英語キー)も自動正規化
 - 列は「ヘッダ名優先 → 位置フォールバック(C/E/F/G/H/O/Q)」
 - 画像URLは Q列系（allow_auto_print_label 等）最優先。=IMAGE() 抽出にも対応
 - 画像ON時は「カード名＋型番＋買取価格のみ」表示（スマホ最適化：型番はバッジ・nowrap）
 - ロゴは LOGO_FILE 環境変数 or assets/logo.png を最優先で埋め込み（base64）
 - 見出しは 2段ヘッダー（PC: 1行 / SP: 2行）。高さはJSで測って被り防止
+- ページネーション：Prev / [1 … (前後3) … 最終] / Next
 """
 
 from pathlib import Path
@@ -317,7 +318,6 @@ base_css = """
 }
 body{ margin:0;color:var(--text);background:var(--bg);font-family:Inter,system-ui,'Noto Sans JP',sans-serif; padding-top: var(--header-h); }
 
-/* === header（PCは1行：logo | title | actions、SPは2行） === */
 header{
   position:fixed;top:0;left:0;right:0;z-index:1000;background:#fff;border-bottom:1px solid var(--border);
   padding:10px 16px; box-shadow:0 2px 10px rgba(0,0,0,.04);
@@ -325,19 +325,14 @@ header{
 .header-wrap{
   max-width:1200px;margin:0 auto;display:grid;gap:8px;width:100%;
   grid-template-columns:auto 1fr auto;
-  grid-template-areas: "logo title actions";   /* ← PCは1行に固定 */
+  grid-template-areas: "logo title actions";
   align-items:center;
 }
 .brand-left{grid-area:logo;display:flex;align-items:center;gap:12px;min-width:0}
-.brand-left img{height:80px;display:block}      /* ← ロゴを大きく（PC） */
+.brand-left img{height:80px;display:block}
 .center-ttl{
   grid-area:title; font-weight:1000; text-align:center;
   font-size:clamp(28px, 5.2vw, 52px); line-height:1.05; color:#111;
-  writing-mode: horizontal-tb;       /* 縦書き化の予防 */
-  text-orientation: mixed;
-  white-space: nowrap;               /* 1行固定 */
-  word-break: keep-all;              /* CJKの強制改行を抑止 */
-  overflow: hidden; text-overflow: ellipsis;  /* 収まりきらない時は省略 */
 }
 .right-spacer{display:none}
 .actions{grid-area:actions;display:flex;align-items:center;gap:10px;justify-content:flex-end}
@@ -376,7 +371,6 @@ input.search:focus{ box-shadow:0 0 0 2px rgba(17,24,39,.08) }
 .th img{width:100%;height:100%;object-fit:cover;display:block;background:#f3f4f6}
 .b{padding:10px 12px}
 
-/* 型番のめり込み対策：バッジ化＋nowrap、タイトルはflexで折返し最適化 */
 .n{font-size:14px;font-weight:800;line-height:1.25;margin:0 0 6px;color:#111;display:flex;gap:6px;align-items:baseline;flex-wrap:wrap;word-break:break-word}
 .n .code{margin-left:0;font-weight:700;font-size:12px;color:#374151;background:#f3f4f6;border:1px solid #e5e7eb;border-radius:8px;padding:2px 6px;white-space:nowrap}
 
@@ -385,49 +379,17 @@ input.search:focus{ box-shadow:0 0 0 2px rgba(17,24,39,.08) }
 .mx{font-weight:1000;color:var(--accent);font-size:clamp(16px, 2.4vw, 22px);line-height:1.05;text-shadow:none;white-space:nowrap;display:inline-block;max-width:100%}
 .grid.grid-img .meta{display:none}
 
-nav.simple{display:flex;justify-content:center;align-items:center;margin:14px 0;gap:14px;flex-wrap:wrap}
-nav.simple a{color:#111;background:#fff;border:1px solid var(--border);padding:8px 16px;border-radius:12px;text-decoration:none;white-space:nowrap}
+/* ページネーション */
+nav.simple{display:flex;justify-content:center;align-items:center;margin:14px 0;gap:8px;flex-wrap:wrap}
+nav.simple a, nav.simple button{
+  color:#111;background:#fff;border:1px solid var(--border);padding:6px 12px;border-radius:10px;
+  text-decoration:none;white-space:nowrap;font-size:13px;line-height:1;cursor:pointer
+}
 nav.simple a.disabled{opacity:.45;pointer-events:none}
-nav.simple strong{color:#111;user-select:none}
-
-/* ページバーを3分割：prev / 可変スクロールの数字 / next */
-nav.simple {
-  gap: 10px;
+nav.simple .num[aria-current="page"]{
+  background:#111;color:#fff;border-color:#111;cursor:default
 }
-nav.simple .navbtn {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  border: 1px solid var(--border);
-  background: #fff;
-  color: #111;
-  border-radius: 12px;
-  padding: 8px 12px;
-  text-decoration: none;
-  white-space: nowrap;
-}
-nav.simple .navbtn.disabled {
-  opacity: .45;
-  pointer-events: none;
-}
-nav.simple .pages {
-  flex: 1 1 auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  overflow-x: auto;                 /* 数字だけ横スクロール */
-  -webkit-overflow-scrolling: touch;
-  padding: 4px 4px;
-  mask-image: linear-gradient(to right, transparent 0, black 12px, black calc(100% - 12px), transparent 100%);
-}
-nav.simple .pages::-webkit-scrollbar { display: none; }
-nav.simple .pages a,
-nav.simple .pages strong {
-  display: inline-block;
-  min-width: 2.2em;
-  text-align: center;
-}
-
+nav.simple .ellipsis{border:none;background:transparent;cursor:default;padding:0 4px}
 
 .viewer{position:fixed; inset:0; background:rgba(0,0,0,.86); display:none; align-items:center; justify-content:center; z-index:2000}
 .viewer.show{display:flex}
@@ -435,7 +397,7 @@ nav.simple .pages strong {
 .viewer img{max-width:92vw;max-height:92vh;display:block}
 .viewer button.close{position:absolute;top:-12px;right:-12px;background:#fff;border:1px solid var(--border);color:#111;border-radius:999px;width:38px;height:38px;cursor:pointer}
 
-/* ===== SP（スマホ）は2行ヘッダー + ページタブ横スクロール ===== */
+/* ===== SPは2行（ロゴ/タイトル/スペーサー + アクション）に戻す ===== */
 @media (max-width:700px){
   :root{ --header-h: 144px; }
   .header-wrap{
@@ -448,31 +410,14 @@ nav.simple .pages strong {
   .right-spacer{display:block; grid-area:spacer;}
   .actions{justify-content:center}
   .center-ttl{ font-size:clamp(24px, 7vw, 36px) }
-
-  /* ページ番号バー：横スクロール可能＆見切れ防止 */
-  nav.simple{
-    gap:8px;
-    justify-content:flex-start;
-    flex-wrap:nowrap;
-    overflow-x:auto;
-    -webkit-overflow-scrolling:touch;
-    padding:6px 10px;
-  }
-  nav.simple::-webkit-scrollbar{ display:none; }
-  nav.simple a, nav.simple strong{
-    display:inline-block;
-    min-width:2.2em;
-    text-align:center;
-  }
-
   .wrap{ padding:4px }
   .grid.grid-img{ gap:2px }
   .b{padding:6px}
   .n{font-size:12px}
   .n .code{font-size:11px;padding:1px 6px;border-radius:6px}
   .mx{ font-size:clamp(12px, 4.2vw, 16px); white-space:nowrap }
-  nav.simple a{padding:6px 10px; font-size:12px}
-  nav.simple strong{font-size:12px}
+  nav.simple{gap:6px; flex-wrap:nowrap; overflow:auto; padding:6px 2px}
+  nav.simple a, nav.simple button{ padding:6px 10px; font-size:12px }
 }
 small.note{color:var(--muted)}
 """
@@ -687,6 +632,63 @@ base_js = r"""
     page=1; render();
   }
 
+  function buildPageButtons(cur, total){
+    const around = 3; // ← ご要望：前後3ページ
+    const btns = [];
+
+    // 1ページ目
+    btns.push({type:'num', page:1});
+
+    // 左側省略
+    const start = Math.max(2, cur - around);
+    const end   = Math.min(total - 1, cur + around);
+
+    if (start > 2) btns.push({type:'ellipsis'});
+
+    for (let p = start; p <= end; p++){
+      if (p >= 2 && p <= total-1){
+        btns.push({type:'num', page:p});
+      }
+    }
+
+    if (end < total - 1) btns.push({type:'ellipsis'});
+
+    // 最終ページ
+    if (total > 1) btns.push({type:'num', page:total});
+
+    return btns;
+  }
+
+  function renderPager(cur, total){
+    const prev = cur>1 ? `<a href="#" data-jump="prev" class="prev">← 前のページ</a>` : `<a class="disabled">← 前のページ</a>`;
+    const next = cur<total ? `<a href="#" data-jump="next" class="next">次のページ →</a>` : `<a class="disabled">次のページ →</a>`;
+
+    const parts = [];
+    parts.push(prev);
+
+    // 数字タブ
+    const items = buildPageButtons(cur, total);
+    items.forEach(item=>{
+      if (item.type==='ellipsis'){
+        parts.push(`<span class="ellipsis">…</span>`);
+      } else {
+        const p = item.page;
+        if (p === cur){
+          parts.push(`<button class="num" aria-current="page" aria-label="現在のページ ${p}" disabled>${p}</button>`);
+        } else {
+          parts.push(`<a class="num" href="#" data-page="${p}" aria-label="ページ ${p}">${p}</a>`);
+        }
+      }
+    });
+
+    parts.push(next);
+    return parts.join(' ');
+  }
+
+  function scrollTopSmooth(){
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
   function render(){
     grid.className = showImages ? 'grid grid-img' : 'grid grid-list';
     const total=VIEW.length;
@@ -705,48 +707,22 @@ base_js = r"""
       });
     }
 
-    // === ページネーション（前後2ページの数字リンクを表示） ===
-    const prev = page>1 ? `<a href="#" data-jump="prev">← 前のページ</a>` : `<a class="disabled">← 前のページ</a>`;
-    const next = page<pages ? `<a href="#" data-jump="next">次のページ →</a>` : `<a class="disabled">次のページ →</a>`;
-
-    const from = Math.max(1, page - 2);
-    const to   = Math.min(pages, page + 2);
-    const nums = [];
-    for (let i=from; i<=to; i++){
-      if (i === page) nums.push(`<strong>${i}</strong>`);
-      else nums.push(`<a href="#" data-goto="${i}">${i}</a>`);
-    }
-    const mid = nums.join(' ');
-
-    const navHtml = `${prev} &nbsp;&nbsp; ${mid} &nbsp;&nbsp; ${next}`;
+    const pagerHtml = renderPager(page, pages);
     navs.forEach(n=>{
-      n.innerHTML=navHtml;
-      n.onclick=(e)=>{
-        const a = e.target.closest('a');
-        if(!a) return;
-        // 前後移動
-        if (a.dataset.jump === 'prev') { e.preventDefault(); page--; render(); window.scrollTo({ top: 0, behavior: 'smooth' }); return; }
-        if (a.dataset.jump === 'next') { e.preventDefault(); page++; render(); window.scrollTo({ top: 0, behavior: 'smooth' }); return; }
-        // 数字ジャンプ
-        if (a.dataset.goto) {
-          e.preventDefault();
-          const p = parseInt(a.dataset.goto,10);
-          if (!Number.isNaN(p)) { page = Math.min(Math.max(1, p), pages); render(); window.scrollTo({ top: 0, behavior: 'smooth' }); }
-        }
+      n.innerHTML = pagerHtml;
+      n.onclick = (e)=>{
+        const a = e.target.closest('a,button');
+        if (!a) return;
+        if (a.matches('.disabled,[disabled]')) return;
+        e.preventDefault();
+
+        if (a.dataset.jump === 'prev') { page = Math.max(1, page-1); render(); scrollTopSmooth(); return; }
+        if (a.dataset.jump === 'next') { page = Math.min(pages, page+1); render(); scrollTopSmooth(); return; }
+
+        const p = parseInt(a.dataset.page || '0', 10);
+        if (p && p !== page){ page = p; render(); scrollTopSmooth(); }
       };
     });
-
-    // スマホ時：現在ページを中央にオートスクロール
-    if (isMobile) {
-      navs.forEach(n=>{
-        if (n.scrollWidth > n.clientWidth) {
-          const cur = n.querySelector('strong');
-          if (cur && typeof cur.scrollIntoView === 'function') {
-            cur.scrollIntoView({ block: 'nearest', inline: 'center' });
-          }
-        }
-      });
-    }
 
     shrinkPrices(grid);
     if (showImages) {
