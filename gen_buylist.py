@@ -440,10 +440,27 @@ input.search:focus{ box-shadow:0 0 0 2px rgba(17,24,39,.08) }
 body.modal-open{ overflow:hidden; }
 
 /* ===== ページネーション（共通の見た目） ===== */
+/* ===== ページネーション（共通の見た目：PCで中央を厳密に） ===== */
 nav.simple{ margin:14px 0; }
-nav.simple .pager{ display:grid; grid-template-columns:auto 1fr auto; align-items:center; gap:8px; }
-nav.simple .left, nav.simple .center, nav.simple .right{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+nav.simple .pager{
+  /* ← 左右を 1fr にして中央カラムを auto にすることで、
+       左右の幅に関係なく「中央」が本当に中央に来ます */
+  display:grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items:center;
+  gap:8px;
+}
+nav.simple .left,
+nav.simple .center,
+nav.simple .right{
+  display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+}
+
+/* 左ブロックは右寄せ、右ブロックは左寄せ（中央を圧迫しない） */
+nav.simple .left  { justify-content:flex-end; }
 nav.simple .center{ justify-content:center; }
+nav.simple .right { justify-content:flex-start; }
+
 nav.simple a, nav.simple button{
   color:#111;background:#fff;border:1px solid var(--border);
   padding:5px 10px;border-radius:10px;text-decoration:none;white-space:nowrap;font-size:13px;line-height:1;cursor:pointer
@@ -452,63 +469,29 @@ nav.simple a.disabled{opacity:.45;pointer-events:none}
 nav.simple .num[aria-current="page"]{ background:#111;color:#fff;border-color:#111;cursor:default }
 nav.simple .ellipsis{border:none;background:transparent;cursor:default;padding:0 2px}
 
-/* ======== スマホ最適化（中央寄せ＆コンパクト） ======== */
+/* デフォルトはモバイル用の2段目(.controls-mobile)を隠す */
+nav.simple .controls-mobile{ display:none; }
+
+/* ======== スマホ最適化（ここは既存のままでOK。必要な行だけ再掲） ======== */
 @media (max-width:700px){
-  :root{ --header-h: 148px; }
-
-  /* ヘッダ：1段目=ロゴ+タイトル、2段目=アクション */
-  .header-wrap{
-    grid-template-columns:auto 1fr auto;
-    grid-template-areas:
-      "logo title spacer"
-      "actions actions actions";
-    align-items:center;
-  }
-  .brand-left img{ height:56px }
-  .right-spacer{ display:block; grid-area:spacer; }
-  .actions{ grid-area:actions; justify-content:center; gap:8px; flex-wrap:wrap; }
-
-  .center-ttl{ font-size:clamp(22px, 6.6vw, 34px); text-align:left; }
-
-  .wrap{ padding:6px }
-  .grid.grid-img{ gap:2px }
-  .b{ padding:6px }
-  .n{ font-size:12px; line-height:1.1 }
-  .n .code{ font-size:10px; padding:1px 5px; border-radius:6px }
-  .mx{ font-size:clamp(12px, 4vw, 16px); white-space:nowrap }
-
-  /* ページャ：2段（上=数字／下=最初前次最後）。どちらも中央寄せ＆コンパクトで1行保持 */
-  nav.simple .pager{
-    display:flex; flex-direction:column; align-items:stretch; gap:6px;
-  }
-
-  /* 数字行：中央寄せ・コンパクト。多すぎる時だけ横スクロール */
+  /* 2段構成：上=数字、下=最初/前/次/最後（中央寄せ） */
+  nav.simple .pager{ display:flex; flex-direction:column; align-items:stretch; gap:6px; }
   nav.simple .center{
     order:1; display:flex; justify-content:center; align-items:center;
     gap:4px; flex-wrap:nowrap; margin:0 auto; padding:0 6px;
-    max-width:100%; white-space:nowrap;
-    overflow:hidden; /* 基本はスクロール無し */
+    max-width:100%; white-space:nowrap; overflow:hidden;
   }
-  /* もし入り切らない時だけ JS で .scroll を付ける（下のJS参照） */
   nav.simple .center.scroll{ overflow-x:auto; -webkit-overflow-scrolling:touch; }
-
   nav.simple .center .num, nav.simple .center .ellipsis{
     flex:0 0 auto; min-width:28px; height:28px; padding:0 8px; font-size:12px; line-height:28px; border-radius:8px;
   }
-
-  /* 操作行：中央寄せ・さらに小さめ */
   nav.simple .controls-mobile{
     order:2; display:flex; justify-content:center; align-items:center;
     gap:4px; flex-wrap:nowrap; margin:0 auto; padding:0 6px; max-width:100%; white-space:nowrap; overflow:hidden;
   }
-  nav.simple .controls-mobile a, nav.simple .controls-mobile button{
-    flex:0 0 auto; padding:3px 6px; font-size:11px; border-radius:6px;
-  }
-
-  /* PC用左右ブロックは隠す */
+  /* PC用の左右ブロックはスマホでは非表示 */
   nav.simple .left, nav.simple .right{ display:none; }
 }
-small.note{color:var(--muted)}
 """
 
 # ========= JS =========
