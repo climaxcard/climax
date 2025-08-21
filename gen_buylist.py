@@ -330,6 +330,10 @@ header{
 .center-ttl{
   grid-area:title; font-weight:1000; text-align:center;
   font-size:clamp(28px, 5.2vw, 52px); line-height:1.05; color:#111;
+  /* ← タイトル縦書き化の予防（強制的に横書き） */
+  writing-mode: horizontal-tb; 
+  text-orientation: mixed;
+  white-space: normal;
 }
 .right-spacer{display:none}
 .actions{grid-area:actions;display:flex;align-items:center;gap:10px;justify-content:flex-end}
@@ -405,6 +409,7 @@ nav.simple .ellipsis{border:none;background:transparent;cursor:default;padding:0
 /* SP二段（上：数字／下：最初・前・次・最後） */
 nav.simple .controls-mobile{ display:none; }
 
+/* ======== SP 調整 ======== */
 @media (max-width:700px){
   /* ナビを2行構成に */
   nav.simple .pager{
@@ -415,7 +420,8 @@ nav.simple .controls-mobile{ display:none; }
   nav.simple .left,
   nav.simple .right{ display:none; }   /* PC用左右は隠す */
 
-  /* 1行目：数字（横スクロール・折り返しなし） */
+  /* 1行目：数字（横スクロール・折り返しなし）
+     → 端が見切れないよう左右に余白＆scroll-padding を付与 */
   nav.simple .center{
     order:1;
     justify-content:center;
@@ -423,8 +429,14 @@ nav.simple .controls-mobile{ display:none; }
     overflow-x:auto;
     max-width:100%;
     -webkit-overflow-scrolling: touch;
+    padding-inline: 10px;           /* ← 端の数字が切れないための内側余白 */
+    scroll-padding-inline: 10px;    /* ← スクロール末端での見切れ防止 */
+    gap:6px;
   }
   nav.simple .center::-webkit-scrollbar{ display:none; }
+  /* 数字自体を折り返し・圧縮させない */
+  nav.simple .center .num,
+  nav.simple .center .ellipsis{ flex:0 0 auto; }
 
   /* 2行目：最初/前/次/最後（文言そのまま、見切れ防止） */
   nav.simple .controls-mobile{
@@ -432,21 +444,43 @@ nav.simple .controls-mobile{ display:none; }
     display:flex;
     flex-wrap:nowrap;
     justify-content:center;
-    gap:4px;          /* 隙間圧縮 */
-    padding:0 4px;    /* 端の見切れ防止 */
+    gap:4px;          
+    padding:0 6px;    /* ← 端の見切れをさらにケア */
     max-width:100%;
     overflow:hidden;
   }
   nav.simple .controls-mobile a,
   nav.simple .controls-mobile button{
-    padding:4px 6px;  /* 余白圧縮 */
-    font-size:11px;   /* 文字微縮 */
+    padding:4px 6px;
+    font-size:11px;
     border-radius:6px;
     white-space:nowrap;
   }
 }
+
+/* ===== SPレイアウト（ヘッダ2段等） ===== */
+@media (max-width:700px){
+  :root{ --header-h: 144px; }
+  .header-wrap{
+    grid-template-columns:auto 1fr auto;
+    grid-template-areas:
+      "logo title spacer"
+      "actions actions actions";
+  }
+  .brand-left img{height:56px}
+  .right-spacer{display:block; grid-area:spacer;}
+  .actions{justify-content:center}
+  .center-ttl{ font-size:clamp(24px, 7vw, 36px) }
+  .wrap{ padding:4px }
+  .grid.grid-img{ gap:2px }
+  .b{padding:6px}
+  .n{font-size:12px}
+  .n .code{font-size:11px;padding:1px 6px;border-radius:6px}
+  .mx{ font-size:clamp(12px, 4.2vw, 16px); white-space:nowrap }
+}
 small.note{color:var(--muted)}
 """
+
 
 # ========= JS =========
 base_js = r"""
