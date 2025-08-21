@@ -7,7 +7,7 @@
 - 画像ON時は「カード名＋型番＋買取価格のみ」表示（スマホ最適化：型番はバッジ・nowrap）
 - ロゴは LOGO_FILE 環境変数 or assets/logo.png を最優先で埋め込み（base64）
 - 見出しは 2段ヘッダー（PC: 1行 / SP: 2行）。高さはJSで測って被り防止
-- ページネーション：PCは「Prev / 数字 / Next」を1行、SPは「数字」→「Prev/Next」の2行
+- ページネーション：PC=左(最初/前)・中央(数字)・右(次/最後)、SP=数字→最初/前/次/最後の2行
 """
 
 from pathlib import Path
@@ -101,9 +101,7 @@ def _read_csv_auto(path: Path) -> pd.DataFrame:
     return pd.read_csv(path)
 
 def _normalize_two_header_layout(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    二重ヘッダ（2行見出し→英語キー行→データ）を、英語キー行を正式ヘッダに整える。
-    """
+    """二重ヘッダ（2行見出し→英語キー行→データ）を、英語キー行を正式ヘッダに整える。"""
     try:
         cand = []
         m = min(12, len(df))
@@ -174,8 +172,7 @@ def to_int_series(s: pd.Series) -> pd.Series:
 def detail_to_img(val: str) -> str:
     if not isinstance(val, str):
         return ""
-    s = val.strip()
-    s = s.replace("＠", "@").replace("＂", '"').replace("＇", "'")
+    s = val.strip().replace("＠", "@").replace("＂", '"').replace("＇", "'")
 
     m = re.search(r'@?IMAGE\s*\(\s*["\']\s*(https?://[^"\']+)\s*["\']', s, flags=re.IGNORECASE)
     if m: return m.group(1).strip()
@@ -379,13 +376,25 @@ input.search:focus{ box-shadow:0 0 0 2px rgba(17,24,39,.08) }
 .mx{font-weight:1000;color:var(--accent);font-size:clamp(16px, 2.4vw, 22px);line-height:1.05;text-shadow:none;white-space:nowrap;display:inline-block;max-width:100%}
 .grid.grid-img .meta{display:none}
 
-/* ===== ページネーション（PC=1行 / SP=2行） ===== */
-nav.simple{
-  display:flex;justify-content:center;align-items:center;margin:14px 0;gap:12px;flex-wrap:wrap
+/* ===== ページネーション（PC=左/中央/右、SP=2行） ===== */
+nav.simple{ margin:14px 0; }
+nav.simple .pager{
+  display:grid;
+  grid-template-columns:auto 1fr auto; /* 左 / 中央 / 右 */
+  align-items:center;
+  gap:12px;
 }
+nav.simple .left,
+nav.simple .center,
+nav.simple .right{
+  display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+}
+nav.simple .center{ justify-content:center; }
+
 nav.simple a, nav.simple button{
-  color:#111;background:#fff;border:1px solid var(--border);padding:6px 12px;border-radius:10px;
-  text-decoration:none;white-space:nowrap;font-size:13px;line-height:1;cursor:pointer
+  color:#111;background:#fff;border:1px solid var(--border);
+  padding:6px 12px;border-radius:10px;text-decoration:none;
+  white-space:nowrap;font-size:13px;line-height:1;cursor:pointer
 }
 nav.simple a.disabled{opacity:.45;pointer-events:none}
 nav.simple .num[aria-current="page"]{
@@ -393,13 +402,24 @@ nav.simple .num[aria-current="page"]{
 }
 nav.simple .ellipsis{border:none;background:transparent;cursor:default;padding:0 4px}
 
-/* PCでは nums と prevnext を横並び（同一行） */
-nav.simple .nums,
-nav.simple .prevnext{
-  display:flex;align-items:center;gap:8px;flex-wrap:wrap
+/* SP二段用（上：数字、下：最初/前/次/最後） */
+nav.simple .controls-mobile{ display:none; }
+
+@media (max-width:700px){
+  nav.simple .pager{
+    display:flex; flex-direction:column; gap:6px;
+  }
+  nav.simple .left, nav.simple .right{ display:none; }   /* PC用左右は隠す */
+  nav.simple .center{
+    order:1; justify-content:center; flex-wrap:nowrap; overflow:auto; max-width:100%;
+  }
+  nav.simple .controls-mobile{
+    order:2; display:flex; gap:10px; justify-content:center; flex-wrap:wrap;
+  }
+  nav.simple a, nav.simple button{ padding:6px 10px; font-size:12px }
 }
 
-/* ===== SPは2行（1行目: 数字／2行目: 前次） ===== */
+/* ===== SPレイアウト調整（ヘッダ2段等） ===== */
 @media (max-width:700px){
   :root{ --header-h: 144px; }
   .header-wrap{
@@ -418,18 +438,6 @@ nav.simple .prevnext{
   .n{font-size:12px}
   .n .code{font-size:11px;padding:1px 6px;border-radius:6px}
   .mx{ font-size:clamp(12px, 4.2vw, 16px); white-space:nowrap }
-
-  nav.simple{
-    flex-direction:column;        /* ← 2行構成に変更 */
-    gap:6px;
-  }
-  nav.simple .nums{
-    order:1; justify-content:center; flex-wrap:nowrap; overflow:auto; max-width:100%;
-  }
-  nav.simple .prevnext{
-    order:2; justify-content:center; gap:10px;
-  }
-  nav.simple a, nav.simple button{ padding:6px 10px; font-size:12px }
 }
 small.note{color:var(--muted)}
 """
@@ -646,26 +654,43 @@ base_js = r"""
     page=1; render();
   }
 
-  // 1 … (前後3) … 最終
+  // 1 … (前後2 or 3) … 最終
   function buildPageButtons(cur, total){
-    const around = 3;
+    const around = matchMedia('(max-width: 700px)').matches ? 2 : 3;
     const btns = [];
     btns.push({type:'num', page:1});
+
     const start = Math.max(2, cur - around);
-    the_end = Math.min(total - 1, cur + around);
+    const end   = Math.min(total - 1, cur + around);
+
     if (start > 2) btns.push({type:'ellipsis'});
-    for (let p = start; p <= the_end; p++){
+    for (let p = start; p <= end; p++){
       if (p >= 2 && p <= total-1) btns.push({type:'num', page:p});
     }
-    if (the_end < total - 1) btns.push({type:'ellipsis'});
+    if (end < total - 1) btns.push({type:'ellipsis'});
+
     if (total > 1) btns.push({type:'num', page:total});
     return btns;
   }
 
-  // PCは1行、SPはCSSで2行（上: 数字 / 下: 前次）
+  // PC：左(最初/前) | 中央(数字) | 右(次/最後)
+  // SP：上(数字) / 下(最初 前 次 最後)
   function renderPager(cur, total){
-    const prev = cur>1 ? `<a href="#" data-jump="prev" class="prev">← 前のページ</a>` : `<a class="disabled">← 前のページ</a>`;
-    const next = cur<total ? `<a href="#" data-jump="next" class="next">次のページ →</a>` : `<a class="disabled">次のページ →</a>`;
+    const first = (cur>1)
+      ? `<a href="#" data-jump="first" class="first">≪ 最初のページ</a>`
+      : `<a class="disabled">≪ 最初のページ</a>`;
+
+    const prev = (cur>1)
+      ? `<a href="#" data-jump="prev" class="prev">← 前のページ</a>`
+      : `<a class="disabled">← 前のページ</a>`;
+
+    const next = (cur<total)
+      ? `<a href="#" data-jump="next" class="next">次のページ →</a>`
+      : `<a class="disabled">次のページ →</a>`;
+
+    const last = (cur<total)
+      ? `<a href="#" data-jump="last" class="last">最後のページ ≫</a>`
+      : `<a class="disabled">最後のページ ≫</a>`;
 
     const nums = buildPageButtons(cur, total).map(item=>{
       if (item.type==='ellipsis') return `<span class="ellipsis">…</span>`;
@@ -676,8 +701,12 @@ base_js = r"""
     }).join(' ');
 
     return `
-      <div class="nums">${nums}</div>
-      <div class="prevnext">${prev} ${next}</div>
+      <div class="pager">
+        <div class="left">${first} ${prev}</div>
+        <div class="center">${nums}</div>
+        <div class="right">${next} ${last}</div>
+        <div class="controls-mobile">${first} ${prev} ${next} ${last}</div>
+      </div>
     `;
   }
 
@@ -710,8 +739,10 @@ base_js = r"""
         if (a.matches('.disabled,[disabled]')) return;
         e.preventDefault();
 
-        if (a.dataset.jump === 'prev') { page = Math.max(1, page-1); render(); scrollTopSmooth(); return; }
-        if (a.dataset.jump === 'next') { page = Math.min(pages, page+1); render(); scrollTopSmooth(); return; }
+        if (a.dataset.jump === 'first') { page = 1;      render(); scrollTopSmooth(); return; }
+        if (a.dataset.jump === 'prev')  { page = Math.max(1, page-1); render(); scrollTopSmooth(); return; }
+        if (a.dataset.jump === 'next')  { page = Math.min(pages, page+1); render(); scrollTopSmooth(); return; }
+        if (a.dataset.jump === 'last')  { page = pages;  render(); scrollTopSmooth(); return; }
 
         const p = parseInt(a.dataset.page || '0', 10);
         if (p && p !== page){ page = p; render(); scrollTopSmooth(); }
@@ -768,10 +799,9 @@ base_js = r"""
 })();
 """
 
-
 # ===== HTML =====
 def html_page(title: str, js_source: str, logo_uri: str, cards_json: str) -> str:
-    shop_svg = "<svg viewBox='0 0 24 24' aria-hidden='true' fill='currentColor'><path d='M3 9.5V8l2.2-3.6c.3-.5.6-.7 1-.7h11.6c.4 0 .7.2.9.6L21 8v1.5c0 1-.8 1.8-1.8 1.8-.9 0-1.6-.6-1.8-1.4-.2.8-.9 1.4-1.8 1.4s-1.6-.6-1.8-1.4c-.2.8-.9 1.4-1.8 1.4s-1.6-.6-1.8-1.4c-.2.8-.9 1.4-1.8 1.4s-1.6-.6-1.8-1.4c-.2.8-.9 1.4-1.8 1.4C3.8 11.3 3 10.5 3 9.5zM5 12.5h14V20c0 .6-.4 1-1 1H6c-.6 0-1-.4-1-1v-7.5zm4 1.5v5h6v-5H9zM6.3 5.2 5 7.5h14l-1.3-2.3H6.3z'/></svg>"
+    shop_svg = "<svg viewBox='0 0 24 24' aria-hidden='true' fill='currentColor'><path d='M3 9.5V8l2.2-3.6c.3-.5.6-.7 1-.7h11.6c.4 0 .7.2.9.6L21 8v1.5c0 1-.8 1.8-1.8 1.8-.9 0-1.6-.6-1.8-1.4-.2.8-.9 1.4-1.8 1.4s-1.6-.6-1.8-1.4c-.2.8-.9 1.4-1.8 1.4s-1.6-.6-1.8-1.4c-.2.8-.9 1.4-1.8 1.4C3.8 11.3 3 10.5 3 9.5zM5 12.5h14V20c0 .6-.4 1-1 1H6c-.6 0-1-.4-1-1v-7.5zm4 1.5v5h6v-5H9zM6.3 5.2 5 7.5h14l-1.3-2.3H6.3z'/></svg>"
     login_svg= "<svg viewBox='0 0 24 24' aria-hidden='true' fill='currentColor'><path d='M12 12a5 5 0 1 0-5-5 5 5 0 0 0 5 5zm0 2c-4.418 0-8 2.239-8 5v2h16v-2c0-2.761-3.582-5-8-5z'/></svg>"
 
     parts = []
