@@ -407,17 +407,35 @@ nav.simple .controls-mobile{ display:none; }
 
 @media (max-width:700px){
   nav.simple .pager{
-    display:flex; flex-direction:column; gap:6px;
+    display:flex;
+    flex-direction:column;
+    gap:6px;
   }
-  nav.simple .left, nav.simple .right{ display:none; }   /* PC用左右は隠す */
+  nav.simple .left,
+  nav.simple .right{ display:none; }   /* PC用左右は隠す */
+
   nav.simple .center{
-    order:1; justify-content:center; flex-wrap:nowrap; overflow:auto; max-width:100%;
+    order:1;
+    justify-content:center;
+    flex-wrap:nowrap;
+    overflow-x:auto;
+    max-width:100%;
+    -webkit-overflow-scrolling: touch;
   }
+  nav.simple .center::-webkit-scrollbar{ display:none; }
+
   nav.simple .controls-mobile{
-    order:2; display:flex; gap:10px; justify-content:center; flex-wrap:wrap;
+    order:2;
+    display:flex;
+    flex-wrap:nowrap;
+    gap:10px;
+    justify-content:center;
   }
-  nav.simple a, nav.simple button{ padding:6px 10px; font-size:12px }
+
+  nav.simple a,
+  nav.simple button{ padding:6px 10px; font-size:12px }
 }
+
 
 /* ===== SPレイアウト調整（ヘッダ2段等） ===== */
 @media (max-width:700px){
