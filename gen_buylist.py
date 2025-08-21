@@ -1,6 +1,14 @@
 # -*- coding: utf-8 -*-
 r"""
-デュエマ買取表 静的ページ生成（完成版・スマホのページャ行をコンパクト＆端切れ防止）
+デュエマ買取表 静的ページ生成（完成版：PC=ロゴ/見出し拡大＆アクション1行、SP=価格固定＆ページャ最適化）
+- CSV/Excel 自動対応。二重ヘッダ(日本語/英語キー)も自動正規化
+- 列は「ヘッダ名優先 → 位置フォールバック(C/E/F/G/H/O/Q)」
+- 画像URLは Q列系（allow_auto_print_label 等）最優先。=IMAGE() 抽出にも対応
+- 画像ON時は「カード名＋型番＋買取価格のみ」表示（スマホ最適化：型番はバッジ・nowrap）
+- ロゴは LOGO_FILE 環境変数 or assets/logo.png を最優先で埋め込み（base64）
+- 見出しは 2段ヘッダー（PC: 1行 / SP: 2行）。高さはJSで測って被り防止
+- ページネーション：PC=左(最初/前)・中央(数字)・右(次/最後)、SP=数字→最初/前/次/最後の2行（重複表示なし）
+- 追加：PCでロゴ/タイトル拡大＆Shop/Login/X/LINEを1行固定、SPで買取金額をカード下に固定
 """
 
 from pathlib import Path
@@ -32,6 +40,7 @@ BUILD_THUMBS = os.getenv("BUILD_THUMBS", "0") == "1"
 
 LOGO_FILE_ENV = os.getenv("LOGO_FILE", "").strip()
 
+# X / LINE アイコン（任意）
 X_ICON_FILE_ENV    = os.getenv("X_ICON_FILE", "").strip()
 LINE_ICON_FILE_ENV = os.getenv("LINE_ICON_FILE", "").strip()
 FIXED_ICON_DIR = Path(r"C:\Users\user\OneDrive\Desktop\デュエマ買取表")
@@ -413,7 +422,7 @@ input.search:focus{ box-shadow:0 0 0 2px rgba(17,24,39,.08) }
 .p{
   margin-top:6px;
   display:flex;
-  flex-wrap:nowrap;      /* ← 価格を1行死守（折り返し禁止） */
+  flex-wrap:nowrap;      /* 価格を1行死守（折り返し禁止） */
   width:100%;
 }
 .mx{
@@ -424,9 +433,9 @@ input.search:focus{ box-shadow:0 0 0 2px rgba(17,24,39,.08) }
   white-space:nowrap;
   display:inline-block;
   max-width:100%;
-  font-variant-numeric: tabular-nums; /* 桁揃えで読みやすく */
-  letter-spacing:-0.02em;             /* わずかに詰める（初期値） */
-  will-change: transform;             /* スケール最適化のヒント */
+  font-variant-numeric: tabular-nums;
+  letter-spacing:-0.02em;
+  will-change: transform;
 }
 
 /* === 画像ビューワ === */
@@ -438,12 +447,10 @@ input.search:focus{ box-shadow:0 0 0 2px rgba(17,24,39,.08) }
 body.modal-open{ overflow:hidden; }
 
 /* ===== ページネーション（PC=左/中央/右、SP=数字+操作） ===== */
-/* ===== ページネーション（PC=左/中央/右、SP=数字+操作） ===== */
 nav.simple{ margin:14px 0; }
 nav.simple .pager{
-  /* ← 左右を同じ1fr/中央autoにして “ど真ん中” を保証 */
   display:grid; 
-  grid-template-columns: 1fr auto 1fr;
+  grid-template-columns: 1fr auto 1fr;  /* 左/中央/右 */
   align-items:center; 
   gap:12px;
 }
@@ -456,7 +463,7 @@ nav.simple .right{
   flex-wrap:wrap;
 }
 nav.simple .left{  justify-content:flex-start; }
-nav.simple .center{justify-content:center; } /* ← 中央コンテンツを中央寄せ */
+nav.simple .center{justify-content:center; }  /* 数字はど真ん中 */
 nav.simple .right{ justify-content:flex-end; }
 
 nav.simple a, nav.simple button{
@@ -467,53 +474,36 @@ nav.simple a.disabled{opacity:.45;pointer-events:none}
 nav.simple .num[aria-current="page"]{ background:#111;color:#fff;border-color:#111;cursor:default }
 nav.simple .ellipsis{border:none;background:transparent;cursor:default;padding:0 4px}
 
-/* PCで “controls-mobile” が見えないように明示（保険） */
+/* PCで “controls-mobile” は非表示（重複防止） */
 nav.simple .controls-mobile{ display:none !important; }
 
-/* ======== スマホ専用は今まで通り（@media (max-width:700px) にあるやつそのまま） ======== */
-
-
-/* ======== スマホ専用：ヘッダー2段＆ページャ行をよりコンパクト ======== */
-/* --- スマホ：カード名が見えない/埋もれる対策 --- */
+/* ======== スマホ（～700px）：カード名見やすく・2行ページャ・価格を下固定 ======== */
 @media (max-width:700px){
-  /* タイトル行は折り返し許可＋コードは2行目へ */
-  .n{ 
-    display:flex;
-    flex-wrap:wrap !important;      /* ← 1行固定を解除 */
-    align-items:flex-start !important;
-  }
-  .n .ttl{
-    flex: 1 1 100% !important;      /* ← タイトルを行全幅に */
-    min-width: 0 !important;
-    display: -webkit-box !important;
-    -webkit-box-orient: vertical !important;
-    -webkit-line-clamp: 2 !important;/* ← 最大2行表示 */
-    overflow: hidden !important;
-
-    /* 折り返し優先（Safariでも確実に改行） */
-    white-space: normal !important;
-    word-break: break-word !important;
-    overflow-wrap: anywhere !important;
-  }
-  .n .code{
-    order: 2 !important;            /* ← タイトルの次の行に回す */
-    margin-top: 2px !important;
-  }
-
-  /* 価格の可読性は維持しつつ微縮小（はみ出し防止） */
-  .mx{ font-size: clamp(12px, 4vw, 16px) !important; }
-}
-
   :root{ --header-h: 144px; }
 
-  /* ヘッダー：1段目=ロゴ+タイトル / 2段目=アクション */
+  /* カード名：タイトルは行全幅、2行まで。型番バッジは2行目へ回す */
+  .n{ display:flex; flex-wrap:wrap !important; align-items:flex-start !important; }
+  .n .ttl{
+    flex:1 1 100% !important; min-width:0 !important;
+    display:-webkit-box !important; -webkit-box-orient:vertical !important; -webkit-line-clamp:2 !important; overflow:hidden !important;
+    white-space:normal !important; word-break:break-word !important; overflow-wrap:anywhere !important;
+  }
+  .n .code{ order:2 !important; margin-top:2px !important; font-size:10.5px !important; padding:1px 5px !important; border-radius:6px !important; }
+
+  /* 価格をカード下に固定 */
+  .card{ display:flex; flex-direction:column; }
+  .th{ flex:0 0 auto; }
+  .b{  flex:1 1 auto; display:flex; flex-direction:column; }
+  .p{  margin-top:auto !important; padding-top:6px; justify-content:flex-end; }
+  .mx{ font-size:clamp(12px, 4vw, 16px) !important; }
+
+  /* ヘッダー：1段目=ロゴ+タイトル / 2段目=アクション（中央寄せ） */
   .header-wrap{
     grid-template-columns:auto 1fr !important;
     grid-template-areas:
       "logo title"
       "actions actions" !important;
-    gap:8px !important;
-    align-items:center !important;
+    gap:8px !important; align-items:center !important;
   }
   .brand-left img{ height:48px !important; width:auto !important; }
   .center-ttl{ margin-left:6px !important; font-size:clamp(22px, 6.2vw, 34px) !important; }
@@ -521,10 +511,9 @@ nav.simple .controls-mobile{ display:none !important; }
   .iconbtn{ padding:7px 10px !important; font-size:12px !important; border-radius:10px !important; }
   .iconimg--x, .iconimg--line{ width:28px !important; height:28px !important; }
 
-  /* ページャを縦2ブロック（上：数字 / 下：操作）にするが、各ブロックは1行キープ */
+  /* ページャ：数字（上）＋操作（下）を各1行に収める */
   nav.simple .pager{ display:flex; flex-direction:column; gap:6px; }
-
-  /* 数字の列：横並び・中央・必要なら横スクロール */
+  nav.simple .left, nav.simple .right{ display:none; } /* PC用左右は隠す */
   nav.simple .center{
     order:1; display:flex; flex-direction:row; align-items:center; justify-content:center;
     gap:6px; flex-wrap:nowrap; overflow-x:auto; -webkit-overflow-scrolling:touch;
@@ -533,8 +522,6 @@ nav.simple .controls-mobile{ display:none !important; }
   nav.simple .center .num, nav.simple .center .ellipsis{
     flex:0 0 auto; display:inline-flex; align-items:center; justify-content:center; min-width:32px; height:28px;
   }
-
-  /* 「≪ 最初のページ … 最後のページ ≫」行：より小さく、余白タイト、端切れ防止 */
   nav.simple .controls-mobile{
     order:2; display:flex; flex-direction:row; justify-content:center; align-items:center;
     gap:4px; flex-wrap:nowrap; overflow-x:auto; -webkit-overflow-scrolling:touch;
@@ -543,22 +530,22 @@ nav.simple .controls-mobile{ display:none !important; }
   }
   nav.simple .controls-mobile a,
   nav.simple .controls-mobile button{
-    flex:0 0 auto;
-    padding:3px 6px;               /* ← 余白ぎゅっと */
-    border-radius:6px;
+    flex:0 0 auto; padding:3px 6px; border-radius:6px;
   }
-
-  /* PC用左右は隠す（重複防止） */
-  nav.simple .left, nav.simple .right{ display:none; }
-
-  /* カード名少し小さめ */
-  .n{ font-size:12px !important; }
-  .n .code{ font-size:10.5px !important; padding:1px 5px !important; border-radius:6px !important; }
 
   .wrap{ padding:4px }
   .grid.grid-img{ gap:2px }
   .b{ padding:6px }
+  .n{ font-size:12px !important; }
 }
+
+/* ==== PC専用：ロゴ＆タイトル拡大＋アクション1行固定 ==== */
+@media (min-width:1024px){
+  .brand-left img{ height:110px; }
+  .center-ttl{ font-size:clamp(40px,4.6vw,72px); }
+  .actions{ flex-wrap:nowrap; } /* Shop / Login / X / LINE を1行に固定 */
+}
+
 small.note{color:var(--muted)}
 """
 
@@ -682,42 +669,36 @@ base_js = r"""
   let currentSort=__INITIAL_SORT__;
 
   function shrinkPrices(root=document){
-  const MIN_PX = 9; // ← 10 → 9 に少しだけ許容を広げる
-  root.querySelectorAll('.mx').forEach(el=>{
-    const style = window.getComputedStyle(el);
-    let size = parseFloat(style.fontSize) || 14;
+    const MIN_PX = 9;
+    root.querySelectorAll('.mx').forEach(el=>{
+      const style = window.getComputedStyle(el);
+      let size = parseFloat(style.fontSize) || 14;
 
-    // 毎回リセットしてから再計算
-    el.style.letterSpacing = '-0.02em';
-    el.style.transform = '';
-    el.style.transformOrigin = 'left center';
+      // リセット
+      el.style.letterSpacing = '-0.02em';
+      el.style.transform = '';
+      el.style.transformOrigin = 'left center';
 
-    const fits = () => el.scrollWidth <= el.clientWidth;
+      const fits = () => el.scrollWidth <= el.clientWidth;
 
-    // まずはフォントサイズを段階的に縮小
-    if (!fits()){
-      while (!fits() && size > MIN_PX) {
-        size -= 1;
-        el.style.fontSize = size + 'px';
+      if (!fits()){
+        while (!fits() && size > MIN_PX) {
+          size -= 1;
+          el.style.fontSize = size + 'px';
+        }
       }
-    }
-
-    // まだ溢れるなら字詰めをもう少しだけ強める
-    if (!fits()){
-      el.style.letterSpacing = '-0.04em';
-    }
-
-    // それでもダメな最終手段：横方向を軽くスケール（視認性を保つため 0.85 まで）
-    if (!fits()){
-      let scale = 0.98;
-      while (!fits() && scale > 0.85) {
-        el.style.transform = `scale(${scale})`;
-        scale -= 0.02;
+      if (!fits()){
+        el.style.letterSpacing = '-0.04em';
       }
-    }
-  });
-}
-
+      if (!fits()){
+        let scale = 0.98;
+        while (!fits() && scale > 0.85) {
+          el.style.transform = `scale(${scale})`;
+          scale -= 0.02;
+        }
+      }
+    });
+  }
 
   // ==== カードHTML ====
   function cardHTML_img(it){
@@ -833,7 +814,7 @@ base_js = r"""
 
   function renderPager(cur, total, isMobile){
     const first = (cur>1)  ? `<a href="#" data-jump="first" class="first">≪ 最初のページ</a>` : `<a class="disabled">≪ 最初のページ</a>`;
-    const prev  = (cur>1)  ? `<a href="#" data-jump="prev"  class="prev">← 前のページ</a>` : `<a class="disabled">← 前のページ</a>`;
+    const prev  = (cur>1)  ? `<a href="#" data-jump="prev"  class="prev">← 前のページ</a>`   : `<a class="disabled">← 前のページ</a>`;
     const next  = (cur<total) ? `<a href="#" data-jump="next"  class="next">次のページ →</a>` : `<a class="disabled">次のページ →</a>`;
     const last  = (cur<total) ? `<a href="#" data-jump="last"  class="last">最後のページ ≫</a>` : `<a class="disabled">最後のページ ≫</a>`;
 
@@ -956,7 +937,6 @@ base_js = r"""
 })();
 """
 
-
 # ===== HTML =====
 def html_page(title: str, js_source: str, logo_uri: str, cards_json: str) -> str:
     shop_svg = "<svg viewBox='0 0 24 24' aria-hidden='true' fill='currentColor'><path d='M3 9.5V8l2.2-3.6c.3-.5.6-.7 1-.7h11.6c.4 0 .7.2 .9 .6L21 8v1.5c0 1-.8 1.8-1.8 1.8-.9 0-1.6-.6-1.8-1.4-.2 .8-.9 1.4-1.8 1.4s-1.6-.6-1.8-1.4c-.2 .8-.9 1.4-1.8 1.4C3.8 11.3 3 10.5 3 9.5zM5 12.5h14V20c0 .6-.4 1-1 1H6c-.6 0-1-.4-1-1v-7.5zm4 1.5v5h6v-5H9zM6.3 5.2 5 7.5h14l-1.3-2.3H6.3z'/></svg>"
@@ -978,6 +958,7 @@ def html_page(title: str, js_source: str, logo_uri: str, cards_json: str) -> str
     parts.append("<div class='actions'>")
     parts.append(f"<a class='iconbtn' href='https://www.climax-card.jp/' target='_blank' rel='noopener'>{shop_svg}<span>Shop</span></a>")
     parts.append(f"<a class='iconbtn' href='https://www.climax-card.jp/member-login' target='_blank' rel='noopener'>{login_svg}<span>Login</span></a>")
+    # 追加：X / LINE アイコン（画像が見つかったときのみ）
     if X_ICON_URI:
         parts.append(f"<a class='iconimg iconimg--x' href='https://x.com/climaxcard' target='_blank' rel='noopener'><img src='{X_ICON_URI}' alt='X'></a>")
     if LINE_ICON_URI:
