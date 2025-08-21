@@ -628,43 +628,62 @@ base_js = r"""
   }
 
   function render(){
-    grid.className = showImages ? 'grid grid-img' : 'grid grid-list';
-    const total=VIEW.length;
-    const pages=Math.max(1, Math.ceil(total/PER_PAGE_ADJ));
-    if(page>pages) page=pages;
-    const start=(page-1)*PER_PAGE_ADJ;
-    const rows=VIEW.slice(start, start+PER_PAGE_ADJ);
-    grid.innerHTML = rows.map(showImages ? cardHTML_img : cardHTML_list).join('');
+  grid.className = showImages ? 'grid grid-img' : 'grid grid-list';
+  const total=VIEW.length;
+  const pages=Math.max(1, Math.ceil(total/PER_PAGE_ADJ));
+  if(page>pages) page=pages;
+  const start=(page-1)*PER_PAGE_ADJ;
+  const rows=VIEW.slice(start, start+PER_PAGE_ADJ);
+  grid.innerHTML = rows.map(showImages ? cardHTML_img : cardHTML_list).join('');
 
-    if(showImages){
-      grid.querySelectorAll('.th').forEach(th=>{
-        th.addEventListener('click', ()=>{
-          const src = th.getAttribute('data-full') || th.querySelector('img')?.src || '';
-          if(!src) return; viewerImg.src = src; viewer.classList.add('show');
-        });
+  if(showImages){
+    grid.querySelectorAll('.th').forEach(th=>{
+      th.addEventListener('click', ()=>{
+        const src = th.getAttribute('data-full') || th.querySelector('img')?.src || '';
+        if(!src) return; viewerImg.src = src; viewer.classList.add('show');
       });
-    }
-
-    const prev = page>1 ? `<a href="#" data-jump="prev">← 前のページ</a>` : `<a class="disabled">← 前のページ</a>`;
-    const next = page<pages ? `<a href="#" data-jump="next">次のページ →</a>` : `<a class="disabled">次のページ →</a>`;
-    const navHtml = `${prev} &nbsp;&nbsp; <strong>${page}/${pages}</strong> &nbsp;&nbsp; ${next}`;
-    navs.forEach(n=>{
-      n.innerHTML=navHtml;
-      n.onclick=(e)=>{
-        const a=e.target.closest('a[data-jump]'); if(!a) return;
-        e.preventDefault();
-        const j=a.dataset.jump; if(j==='prev') page--; else if(j==='next') page++;
-        render(); window.scrollTo({ top: 0, behavior: 'smooth' });
-      };
     });
-
-    shrinkPrices(grid);
-    if (showImages) {
-      setupIO();
-      eagerLoad(eager1);
-      setTimeout(()=>eagerLoad(eager2), 600);
-    }
   }
+
+  // === ページネーション（前後3ページの数字リンクを表示） ===
+  const prev = page>1 ? `<a href="#" data-jump="prev">← 前のページ</a>` : `<a class="disabled">← 前のページ</a>`;
+  const next = page<pages ? `<a href="#" data-jump="next">次のページ →</a>` : `<a class="disabled">次のページ →</a>`;
+
+  const from = Math.max(1, page - 3);
+  const to   = Math.min(pages, page + 3);
+  const nums = [];
+  for (let i=from; i<=to; i++){
+    if (i === page) nums.push(`<strong>${i}</strong>`);
+    else nums.push(`<a href="#" data-goto="${i}">${i}</a>`);
+  }
+  const mid = nums.join(' ');
+
+  const navHtml = `${prev} &nbsp;&nbsp; ${mid} &nbsp;&nbsp; ${next}`;
+  navs.forEach(n=>{
+    n.innerHTML=navHtml;
+    n.onclick=(e)=>{
+      const a = e.target.closest('a');
+      if(!a) return;
+      // 前後移動
+      if (a.dataset.jump === 'prev') { e.preventDefault(); page--; render(); window.scrollTo({ top: 0, behavior: 'smooth' }); return; }
+      if (a.dataset.jump === 'next') { e.preventDefault(); page++; render(); window.scrollTo({ top: 0, behavior: 'smooth' }); return; }
+      // 数字ジャンプ
+      if (a.dataset.goto) {
+        e.preventDefault();
+        const p = parseInt(a.dataset.goto,10);
+        if (!Number.isNaN(p)) { page = Math.min(Math.max(1, p), pages); render(); window.scrollTo({ top: 0, behavior: 'smooth' }); }
+      }
+    };
+  });
+
+  shrinkPrices(grid);
+  if (showImages) {
+    setupIO();
+    eagerLoad(eager1);
+    setTimeout(()=>eagerLoad(eager2), 600);
+  }
+}
+
 
   function setActiveSort(){
     btnDesc?.setAttribute('aria-pressed', currentSort==='desc' ? 'true':'false');
