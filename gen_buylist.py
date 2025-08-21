@@ -333,8 +333,13 @@ header{
 .center-ttl{
   grid-area:title; font-weight:1000; text-align:center;
   font-size:clamp(28px, 5.2vw, 52px); line-height:1.05; color:#111;
+  writing-mode: horizontal-tb;       /* 縦書き化の予防 */
+  text-orientation: mixed;
+  white-space: nowrap;               /* 1行固定 */
+  word-break: keep-all;              /* CJKの強制改行を抑止 */
+  overflow: hidden; text-overflow: ellipsis;  /* 収まりきらない時は省略 */
 }
-.right-spacer{display:none}                     /* PCでは未使用 */
+.right-spacer{display:none}
 .actions{grid-area:actions;display:flex;align-items:center;gap:10px;justify-content:flex-end}
 .iconbtn{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--border);background:#fff;color:#111;border-radius:12px;padding:9px 12px;text-decoration:none;font-size:13px;transition:transform .12s ease, background .12s ease}
 .iconbtn:hover{background:#f9fafb; transform:translateY(-1px)}
@@ -391,42 +396,43 @@ nav.simple strong{color:#111;user-select:none}
 .viewer img{max-width:92vw;max-height:92vh;display:block}
 .viewer button.close{position:absolute;top:-12px;right:-12px;background:#fff;border:1px solid var(--border);color:#111;border-radius:999px;width:38px;height:38px;cursor:pointer}
 
-/* ===== SPは2行（ロゴ/タイトル/スペーサー + アクション）に戻す ===== */
+/* ===== SP（スマホ）は2行ヘッダー + ページタブ横スクロール ===== */
 @media (max-width:700px){
-  /* ...既存... */
-
-  /* ← ページタブが見切れないように横スクロール */
-  nav.simple{
-    gap:8px;
-    justify-content:flex-start;    /* 両端揃えだと切れやすいので先頭寄せ */
-    flex-wrap:nowrap;               /* 改行させず */
-    overflow-x:auto;                /* 横スクロールON */
-    -webkit-overflow-scrolling:touch;
-    padding:6px 10px;               /* スクロール余白 */
+  :root{ --header-h: 144px; }
+  .header-wrap{
+    grid-template-columns:auto 1fr auto;
+    grid-template-areas:
+      "logo title spacer"
+      "actions actions actions";
   }
-  nav.simple::-webkit-scrollbar{ display:none; } /* iOS/Androidでスクロールバー非表示 */
-
-  nav.simple a, nav.simple strong{
-    display:inline-block;           /* タブのように並べる */
-    min-width:2.2em;                /* 指で押しやすい幅 */
-    text-align:center;
-  }
-
-  /* ...既存... */
-}
-
   .brand-left img{height:56px}
   .right-spacer{display:block; grid-area:spacer;}
   .actions{justify-content:center}
   .center-ttl{ font-size:clamp(24px, 7vw, 36px) }
+
+  /* ページ番号バー：横スクロール可能＆見切れ防止 */
+  nav.simple{
+    gap:8px;
+    justify-content:flex-start;
+    flex-wrap:nowrap;
+    overflow-x:auto;
+    -webkit-overflow-scrolling:touch;
+    padding:6px 10px;
+  }
+  nav.simple::-webkit-scrollbar{ display:none; }
+  nav.simple a, nav.simple strong{
+    display:inline-block;
+    min-width:2.2em;
+    text-align:center;
+  }
+
   .wrap{ padding:4px }
   .grid.grid-img{ gap:2px }
   .b{padding:6px}
   .n{font-size:12px}
   .n .code{font-size:11px;padding:1px 6px;border-radius:6px}
   .mx{ font-size:clamp(12px, 4.2vw, 16px); white-space:nowrap }
-  nav.simple{gap:8px; flex-wrap:nowrap; justify-content:space-between}
-  nav.simple a{padding:6px 10px; font-size:12px; display:inline-flex}
+  nav.simple a{padding:6px 10px; font-size:12px}
   nav.simple strong{font-size:12px}
 }
 small.note{color:var(--muted)}
@@ -643,62 +649,73 @@ base_js = r"""
   }
 
   function render(){
-  grid.className = showImages ? 'grid grid-img' : 'grid grid-list';
-  const total=VIEW.length;
-  const pages=Math.max(1, Math.ceil(total/PER_PAGE_ADJ));
-  if(page>pages) page=pages;
-  const start=(page-1)*PER_PAGE_ADJ;
-  const rows=VIEW.slice(start, start+PER_PAGE_ADJ);
-  grid.innerHTML = rows.map(showImages ? cardHTML_img : cardHTML_list).join('');
+    grid.className = showImages ? 'grid grid-img' : 'grid grid-list';
+    const total=VIEW.length;
+    const pages=Math.max(1, Math.ceil(total/PER_PAGE_ADJ));
+    if(page>pages) page=pages;
+    const start=(page-1)*PER_PAGE_ADJ;
+    const rows=VIEW.slice(start, start+PER_PAGE_ADJ);
+    grid.innerHTML = rows.map(showImages ? cardHTML_img : cardHTML_list).join('');
 
-  if(showImages){
-    grid.querySelectorAll('.th').forEach(th=>{
-      th.addEventListener('click', ()=>{
-        const src = th.getAttribute('data-full') || th.querySelector('img')?.src || '';
-        if(!src) return; viewerImg.src = src; viewer.classList.add('show');
+    if(showImages){
+      grid.querySelectorAll('.th').forEach(th=>{
+        th.addEventListener('click', ()=>{
+          const src = th.getAttribute('data-full') || th.querySelector('img')?.src || '';
+          if(!src) return; viewerImg.src = src; viewer.classList.add('show');
+        });
       });
+    }
+
+    // === ページネーション（前後2ページの数字リンクを表示） ===
+    const prev = page>1 ? `<a href="#" data-jump="prev">← 前のページ</a>` : `<a class="disabled">← 前のページ</a>`;
+    const next = page<pages ? `<a href="#" data-jump="next">次のページ →</a>` : `<a class="disabled">次のページ →</a>`;
+
+    const from = Math.max(1, page - 2);
+    const to   = Math.min(pages, page + 2);
+    const nums = [];
+    for (let i=from; i<=to; i++){
+      if (i === page) nums.push(`<strong>${i}</strong>`);
+      else nums.push(`<a href="#" data-goto="${i}">${i}</a>`);
+    }
+    const mid = nums.join(' ');
+
+    const navHtml = `${prev} &nbsp;&nbsp; ${mid} &nbsp;&nbsp; ${next}`;
+    navs.forEach(n=>{
+      n.innerHTML=navHtml;
+      n.onclick=(e)=>{
+        const a = e.target.closest('a');
+        if(!a) return;
+        // 前後移動
+        if (a.dataset.jump === 'prev') { e.preventDefault(); page--; render(); window.scrollTo({ top: 0, behavior: 'smooth' }); return; }
+        if (a.dataset.jump === 'next') { e.preventDefault(); page++; render(); window.scrollTo({ top: 0, behavior: 'smooth' }); return; }
+        // 数字ジャンプ
+        if (a.dataset.goto) {
+          e.preventDefault();
+          const p = parseInt(a.dataset.goto,10);
+          if (!Number.isNaN(p)) { page = Math.min(Math.max(1, p), pages); render(); window.scrollTo({ top: 0, behavior: 'smooth' }); }
+        }
+      };
     });
+
+    // スマホ時：現在ページを中央にオートスクロール
+    if (isMobile) {
+      navs.forEach(n=>{
+        if (n.scrollWidth > n.clientWidth) {
+          const cur = n.querySelector('strong');
+          if (cur && typeof cur.scrollIntoView === 'function') {
+            cur.scrollIntoView({ block: 'nearest', inline: 'center' });
+          }
+        }
+      });
+    }
+
+    shrinkPrices(grid);
+    if (showImages) {
+      setupIO();
+      eagerLoad(eager1);
+      setTimeout(()=>eagerLoad(eager2), 600);
+    }
   }
-
-  // === ページネーション（前後3ページの数字リンクを表示） ===
-  const prev = page>1 ? `<a href="#" data-jump="prev">← 前のページ</a>` : `<a class="disabled">← 前のページ</a>`;
-  const next = page<pages ? `<a href="#" data-jump="next">次のページ →</a>` : `<a class="disabled">次のページ →</a>`;
-
-  const from = Math.max(1, page - 3);
-  const to   = Math.min(pages, page + 3);
-  const nums = [];
-  for (let i=from; i<=to; i++){
-    if (i === page) nums.push(`<strong>${i}</strong>`);
-    else nums.push(`<a href="#" data-goto="${i}">${i}</a>`);
-  }
-  const mid = nums.join(' ');
-
-  const navHtml = `${prev} &nbsp;&nbsp; ${mid} &nbsp;&nbsp; ${next}`;
-  navs.forEach(n=>{
-    n.innerHTML=navHtml;
-    n.onclick=(e)=>{
-      const a = e.target.closest('a');
-      if(!a) return;
-      // 前後移動
-      if (a.dataset.jump === 'prev') { e.preventDefault(); page--; render(); window.scrollTo({ top: 0, behavior: 'smooth' }); return; }
-      if (a.dataset.jump === 'next') { e.preventDefault(); page++; render(); window.scrollTo({ top: 0, behavior: 'smooth' }); return; }
-      // 数字ジャンプ
-      if (a.dataset.goto) {
-        e.preventDefault();
-        const p = parseInt(a.dataset.goto,10);
-        if (!Number.isNaN(p)) { page = Math.min(Math.max(1, p), pages); render(); window.scrollTo({ top: 0, behavior: 'smooth' }); }
-      }
-    };
-  });
-
-  shrinkPrices(grid);
-  if (showImages) {
-    setupIO();
-    eagerLoad(eager1);
-    setTimeout(()=>eagerLoad(eager2), 600);
-  }
-}
-
 
   function setActiveSort(){
     btnDesc?.setAttribute('aria-pressed', currentSort==='desc' ? 'true':'false');
