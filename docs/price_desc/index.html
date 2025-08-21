@@ -225,7 +225,9 @@ small.note{color:var(--muted)}
     _rarity_lat:      normalizeLatin(it.rarity || "")
   }));
 
-  let VIEW=[]; let page=1; let currentSort='desc';
+  let VIEW=[]; 
+  let page=1; 
+  let currentSort='desc';
 
   function shrinkPrices(root=document){
     const MIN_PX = 10;
@@ -335,17 +337,17 @@ small.note{color:var(--muted)}
     const btns = [];
     btns.push({type:'num', page:1});
     const start = Math.max(2, cur - around);
-    const end   = Math.min(total - 1, cur + around);
+    the_end = Math.min(total - 1, cur + around);
     if (start > 2) btns.push({type:'ellipsis'});
-    for (let p = start; p <= end; p++){
+    for (let p = start; p <= the_end; p++){
       if (p >= 2 && p <= total-1) btns.push({type:'num', page:p});
     }
-    if (end < total - 1) btns.push({type:'ellipsis'});
+    if (the_end < total - 1) btns.push({type:'ellipsis'});
     if (total > 1) btns.push({type:'num', page:total});
     return btns;
   }
 
-  // PCは1行、SPはCSSで2行（上: 数字 / 下: 前次）に自動分割
+  // PCは1行、SPはCSSで2行（上: 数字 / 下: 前次）
   function renderPager(cur, total){
     const prev = cur>1 ? `<a href="#" data-jump="prev" class="prev">← 前のページ</a>` : `<a class="disabled">← 前のページ</a>`;
     const next = cur<total ? `<a href="#" data-jump="next" class="next">次のページ →</a>` : `<a class="disabled">次のページ →</a>`;
@@ -358,7 +360,6 @@ small.note{color:var(--muted)}
         : `<a class="num" href="#" data-page="${p}" aria-label="ページ ${p}">${p}</a>`;
     }).join(' ');
 
-    // 2グループ構成（PCは横並び、SPは縦2行）
     return `
       <div class="nums">${nums}</div>
       <div class="prevnext">${prev} ${next}</div>
@@ -366,8 +367,6 @@ small.note{color:var(--muted)}
   }
 
   function scrollTopSmooth(){ window.scrollTo({ top: 0, behavior: 'smooth' }); }
-
-  let page=1; let currentSort='desc';
 
   function render(){
     grid.className = showImages ? 'grid grid-img' : 'grid grid-list';
