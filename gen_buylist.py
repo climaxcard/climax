@@ -541,68 +541,111 @@ nav.simple .controls-mobile{ display:none; }
 
 
 /* === ここから：スマホ用ページャ横1列固定（数字行／操作行）※必ずCSSの末尾に置く === */
+/* ========= スマホ最適化（ヘッダー2段＆アイコン・ページャ見切れ対策） ========= */
 @media (max-width:700px){
-  nav.simple .pager{
-    display:flex !important;
-    flex-direction:column !important;
-    gap:6px !important;
-  }
-  /* PC用左右は隠す */
-  nav.simple .left,
-  nav.simple .right{
-    display:none !important;
+
+  /* ヘッダーは2段：上段=ロゴ+アクション / 下段=タイトル（フル幅） */
+  .header-wrap{
+    grid-template-columns: auto 1fr;              /* 左：ロゴ / 右：アクション */
+    grid-template-areas:
+      "logo actions"
+      "title title";
+    row-gap: 6px;                                  /* 段間の余白 */
+    align-items: center;
   }
 
-  /* 数字の行（横並び固定＋横スクロール） */
+  /* ロゴは少しだけ小さめにして被りにくく */
+  .brand-left img{ height: 52px; }                 /* （お好みで 48〜56px の範囲でOK） */
+
+  /* タイトルは下段フル幅・中央寄せ（横書きは既存の !important が効く） */
+  .center-ttl{
+    grid-area: title;
+    text-align: center;
+    font-size: clamp(22px, 6.4vw, 34px);
+    margin: 0;
+    min-width: 0;
+  }
+
+  /* アクション（Shop/Login/X/LINE）は右側。折り返しOKで見切れ防止 */
+  .actions{
+    grid-area: actions;
+    justify-content: flex-end;
+    gap: 8px;
+    flex-wrap: wrap;                               /* はみ出す前に折り返す */
+  }
+
+  /* SNSアイコンはモバイルだけ少し小さめ＋枠内に収める */
+  .iconimg--x, .iconimg--line{ width: 28px; height: 28px; }
+  .iconimg--x img   { width: 120%; height:120%; object-fit: cover; }
+  .iconimg--line img{ width: 150%; height:150%; object-fit: cover; }
+
+  /* ===== ページャ：横1列キープ＆端見切れ防止（数字/操作の両方） ===== */
+  nav.simple .pager{
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  /* PC用の左右ブロックは隠す（スマホは2段構成） */
+  nav.simple .left, nav.simple .right{ display: none; }
+
+  /* 数字の列：中央寄せ・横スクロール・端に余白ガード */
   nav.simple .center{
-    order:1;
-    display:flex !important;
-    flex-direction:row !important;
-    align-items:center !important;
-    justify-content:center !important;
-    gap:6px !important;
-    flex-wrap:nowrap !important;
-    overflow-x:auto;
-    -webkit-overflow-scrolling:touch;
-    padding-inline:10px;
-    scroll-padding-inline:10px;
-    white-space:nowrap !important;
-    writing-mode:horizontal-tb !important;
-    text-orientation:mixed !important;
+    order: 1;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;       /* 中央に据える */
+    gap: 6px;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    padding-inline: 14px;          /* 端の数字が切れないように余白アップ */
+    scroll-padding-inline: 14px;
+    white-space: nowrap;
+    writing-mode: horizontal-tb !important;
+    text-orientation: mixed !important;
+    margin-inline: auto;
+  }
+  /* 端見切れ防止の“ダミー余白” */
+  nav.simple .center::before,
+  nav.simple .center::after{
+    content:"";
+    flex: 0 0 8px;
   }
   nav.simple .center .num,
   nav.simple .center .ellipsis{
-    flex:0 0 auto;
-    display:inline-flex !important;
-    align-items:center;
-    justify-content:center;
-    min-width:34px;
-    height:30px;
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 34px;
+    height: 30px;
   }
 
-  /* 「最初/前/次/最後」の行（横並び固定＋横スクロール） */
+  /* 下段：最初/前/次/最後（横1列・必要なら横スクロール） */
   nav.simple .controls-mobile{
-    order:2;
-    display:flex !important;
-    flex-direction:row !important;
-    justify-content:center !important;
-    gap:6px !important;
-    flex-wrap:nowrap !important;
-    padding:0 6px;
-    overflow-x:auto;
-    -webkit-overflow-scrolling:touch;
-    white-space:nowrap !important;
-    writing-mode:horizontal-tb !important;
-    text-orientation:mixed !important;
+    order: 2;
+    display: flex;
+    flex-direction: row;
+    justify-content: center;
+    gap: 6px;
+    flex-wrap: nowrap;
+    padding: 0 12px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    white-space: nowrap;
+  }
+  /* 端見切れ防止のダミー余白 */
+  nav.simple .controls-mobile::before,
+  nav.simple .controls-mobile::after{
+    content:"";
+    flex: 0 0 8px;
   }
   nav.simple .controls-mobile a,
   nav.simple .controls-mobile button{
-    flex:0 0 auto;
-    white-space:nowrap !important;
-    display:inline-flex;
-    align-items:center;
-    justify-content:center;
-    height:30px;
+    flex: 0 0 auto;
+    white-space: nowrap;
   }
 }
 small.note{color:var(--muted)}
