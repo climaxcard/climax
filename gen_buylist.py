@@ -390,6 +390,45 @@ nav.simple a{color:#111;background:#fff;border:1px solid var(--border);padding:8
 nav.simple a.disabled{opacity:.45;pointer-events:none}
 nav.simple strong{color:#111;user-select:none}
 
+/* ページバーを3分割：prev / 可変スクロールの数字 / next */
+nav.simple {
+  gap: 10px;
+}
+nav.simple .navbtn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  background: #fff;
+  color: #111;
+  border-radius: 12px;
+  padding: 8px 12px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+nav.simple .navbtn.disabled {
+  opacity: .45;
+  pointer-events: none;
+}
+nav.simple .pages {
+  flex: 1 1 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  overflow-x: auto;                 /* 数字だけ横スクロール */
+  -webkit-overflow-scrolling: touch;
+  padding: 4px 4px;
+  mask-image: linear-gradient(to right, transparent 0, black 12px, black calc(100% - 12px), transparent 100%);
+}
+nav.simple .pages::-webkit-scrollbar { display: none; }
+nav.simple .pages a,
+nav.simple .pages strong {
+  display: inline-block;
+  min-width: 2.2em;
+  text-align: center;
+}
+
+
 .viewer{position:fixed; inset:0; background:rgba(0,0,0,.86); display:none; align-items:center; justify-content:center; z-index:2000}
 .viewer.show{display:flex}
 .viewer .vc{position:relative;max-width:92vw;max-height:92vh}
