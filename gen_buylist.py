@@ -541,114 +541,114 @@ nav.simple .controls-mobile{ display:none; }
 
 
 /* === ここから：スマホ用ページャ横1列固定（数字行／操作行）※必ずCSSの末尾に置く === */
-/* ========= スマホ最適化（ヘッダー2段＆アイコン・ページャ見切れ対策） ========= */
+/* ========= スマホ最適化（ヘッダー/ページャ/カード圧縮） ========= */
 @media (max-width:700px){
 
-  /* ヘッダーは2段：上段=ロゴ+アクション / 下段=タイトル（フル幅） */
+  /* ヘッダー：1段目=ロゴ+タイトル / 2段目=アクション(SHOP/LOGIN/X/LINE) */
   .header-wrap{
-    grid-template-columns: auto 1fr;              /* 左：ロゴ / 右：アクション */
+    grid-template-columns: auto 1fr;
     grid-template-areas:
-      "logo actions"
-      "title title";
-    row-gap: 6px;                                  /* 段間の余白 */
+      "logo title"
+      "actions actions";
+    row-gap: 6px;
     align-items: center;
   }
-
-  /* ロゴは少しだけ小さめにして被りにくく */
-  .brand-left img{ height: 52px; }                 /* （お好みで 48〜56px の範囲でOK） */
-
-  /* タイトルは下段フル幅・中央寄せ（横書きは既存の !important が効く） */
+  .brand-left img{ height:52px; }                 /* ロゴ少しだけ小さく */
   .center-ttl{
     grid-area: title;
-    text-align: center;
+    text-align: left;                              /* ロゴ右横に自然に並べる */
     font-size: clamp(22px, 6.4vw, 34px);
     margin: 0;
     min-width: 0;
-  }
-
-  /* アクション（Shop/Login/X/LINE）は右側。折り返しOKで見切れ防止 */
-  .actions{
-    grid-area: actions;
-    justify-content: flex-end;
-    gap: 8px;
-    flex-wrap: wrap;                               /* はみ出す前に折り返す */
-  }
-
-  /* SNSアイコンはモバイルだけ少し小さめ＋枠内に収める */
-  .iconimg--x, .iconimg--line{ width: 28px; height: 28px; }
-  .iconimg--x img   { width: 120%; height:120%; object-fit: cover; }
-  .iconimg--line img{ width: 150%; height:150%; object-fit: cover; }
-
-  /* ===== ページャ：横1列キープ＆端見切れ防止（数字/操作の両方） ===== */
-  nav.simple .pager{
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-
-  /* PC用の左右ブロックは隠す（スマホは2段構成） */
-  nav.simple .left, nav.simple .right{ display: none; }
-
-  /* 数字の列：中央寄せ・横スクロール・端に余白ガード */
-  nav.simple .center{
-    order: 1;
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-    justify-content: center;       /* 中央に据える */
-    gap: 6px;
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-    padding-inline: 14px;          /* 端の数字が切れないように余白アップ */
-    scroll-padding-inline: 14px;
-    white-space: nowrap;
     writing-mode: horizontal-tb !important;
     text-orientation: mixed !important;
-    margin-inline: auto;
+    word-break: keep-all;
   }
-  /* 端見切れ防止の“ダミー余白” */
-  nav.simple .center::before,
-  nav.simple .center::after{
-    content:"";
-    flex: 0 0 8px;
+  .actions{
+    grid-area: actions;
+    justify-content: center;
+    gap: 8px;
+    flex-wrap: wrap;                               /* 見切れ前に折返し可 */
+  }
+  .iconimg--x, .iconimg--line{ width:28px; height:28px; }
+  .iconimg--x img   { width:120%; height:120%; object-fit:cover; }
+  .iconimg--line img{ width:150%; height:150%; object-fit:cover; }
+
+  /* ページャ：数字列 = 1行中央、操作列(≪最初/前/次/最後≫) = 1行中央に“確実”に収める */
+  nav.simple .pager{
+    display:flex;
+    flex-direction:column;
+    gap:6px;
+  }
+  /* PC用 左右は非表示（スマホは2段構成） */
+  nav.simple .left, nav.simple .right{ display:none; }
+
+  /* 数字の列（中央・1行固定） */
+  nav.simple .center{
+    order:1;
+    display:flex;
+    flex-direction:row;
+    align-items:center;
+    justify-content:center;        /* ← きっちり中央 */
+    gap:6px;
+    flex-wrap:nowrap;              /* ← 改行させない */
+    overflow-x:hidden;             /* ← スクロール無しで見栄え優先 */
+    padding-inline:10px;
+    white-space:nowrap;
+    margin-inline:auto;
+    writing-mode:horizontal-tb !important;
+    text-orientation:mixed !important;
   }
   nav.simple .center .num,
   nav.simple .center .ellipsis{
-    flex: 0 0 auto;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 34px;
-    height: 30px;
+    flex:0 0 auto;
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    min-width:30px;
+    height:28px;
   }
 
-  /* 下段：最初/前/次/最後（横1列・必要なら横スクロール） */
+  /* 「≪ 最初 / 前 / 次 / 最後 ≫」列（1行に収めるため小型化） */
   nav.simple .controls-mobile{
-    order: 2;
-    display: flex;
-    flex-direction: row;
-    justify-content: center;
-    gap: 6px;
-    flex-wrap: nowrap;
-    padding: 0 12px;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-    white-space: nowrap;
-  }
-  /* 端見切れ防止のダミー余白 */
-  nav.simple .controls-mobile::before,
-  nav.simple .controls-mobile::after{
-    content:"";
-    flex: 0 0 8px;
+    order:2;
+    display:flex;
+    flex-direction:row;
+    justify-content:center;
+    align-items:center;
+    gap:4px;                       /* ← 余白を詰める */
+    flex-wrap:nowrap;              /* ← 1行固定 */
+    padding:0 6px;
+    overflow-x:hidden;             /* ← 横スクロール無し */
+    white-space:nowrap;
+    margin-inline:auto;
   }
   nav.simple .controls-mobile a,
   nav.simple .controls-mobile button{
-    flex: 0 0 auto;
-    white-space: nowrap;
+    font-size: clamp(9.5px, 2.6vw, 11.5px);  /* ← テキスト自動縮小 */
+    padding:4px 6px;                         /* ← 余白圧縮 */
+    border-radius:6px;
+    letter-spacing:-0.2px;                   /* ← わずかに詰める */
   }
+
+  /* カードの“縦長感”を軽減（余白・文字量を調整） */
+  .grid.grid-img{ gap:2px; }
+  .card{ border-radius:12px; }
+  .b{ padding:4px 6px; }                     /* 本文余白を減らす */
+  .n{
+    font-size:12px;
+    line-height:1.1;
+    display:flex; align-items:center; gap:6px;
+    min-width:0;
+    white-space:nowrap;                      /* ← 1行にして */
+    overflow:hidden; text-overflow:ellipsis; /* ← 省略記号で詰める */
+  }
+  .n .code{
+    font-size:10px; padding:1px 5px; border-radius:6px; flex:0 0 auto;
+  }
+  .mx{ font-size: clamp(12px, 3.8vw, 15px); white-space:nowrap; }
 }
-small.note{color:var(--muted)}
+
 """
 
 # ========= JS =========
