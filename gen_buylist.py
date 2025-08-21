@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-デュエマ買取表 静的ページ生成（完成版・中央タイトル＋ロゴ・数字タブ＋SPは2行ナビ）
+デュエマ買取表 静的ページ生成（完成版・中央タイトル＋ロゴ・数字タブ＋SPは2行ナビ＋X/LINE画像ボタン）
 - CSV/Excel 自動対応。二重ヘッダ(日本語/英語キー)も自動正規化
 - 列は「ヘッダ名優先 → 位置フォールバック(C/E/F/G/H/O/Q)」
 - 画像URLは Q列系（allow_auto_print_label 等）最優先。=IMAGE() 抽出にも対応
@@ -8,6 +8,7 @@
 - ロゴは LOGO_FILE 環境変数 or assets/logo.png を最優先で埋め込み（base64）
 - 見出しは 2段ヘッダー（PC: 1行 / SP: 2行）。高さはJSで測って被り防止
 - ページネーション：PC=左(最初/前)・中央(数字)・右(次/最後)、SP=数字→最初/前/次/最後の2行
+- ヘッダー右端に X / LINE の画像アイコンボタン（画像ファイルは assets/ か指定のデスクトップフォルダ、または環境変数で指定）
 """
 
 from pathlib import Path
@@ -41,6 +42,13 @@ BUILD_THUMBS = os.getenv("BUILD_THUMBS", "0") == "1"
 
 # ロゴ（任意）
 LOGO_FILE_ENV = os.getenv("LOGO_FILE", "").strip()
+
+# ★X/LINE アイコン（任意：環境変数 or 既定パスを自動探索）
+X_ICON_FILE_ENV    = os.getenv("X_ICON_FILE", "").strip()
+LINE_ICON_FILE_ENV = os.getenv("LINE_ICON_FILE", "").strip()
+
+# 既定で探索するデスクトップのフォルダ（ご指定）
+FIXED_ICON_DIR = Path(r"C:\Users\user\OneDrive\Desktop\デュエマ買取表")
 
 # argvでファイルパス上書き
 if len(sys.argv) > 1 and sys.argv[1]:
@@ -90,6 +98,36 @@ def logo_to_data_uri(p: Path|None) -> str:
         return ""
 
 LOGO_URI = logo_to_data_uri(find_logo_path())
+
+# ---- X/LINE 画像探索（assets / 作業ディレクトリ / スクリプト隣 / ご指定のデスクトップフォルダ / 環境変数）----
+def find_icon_path(env_path: str, default_names: list[str]):
+    cands = []
+    if env_path:
+        cands.append(Path(env_path))
+    # assets 配下
+    cands += [Path("assets") / n for n in default_names]
+    # CWD
+    cands += [Path(os.getcwd()) / n for n in default_names]
+    # スクリプト隣
+    try:
+        here = Path(__file__).parent
+        cands += [here / "assets" / n for n in default_names]
+        cands += [here / n for n in default_names]
+    except NameError:
+        pass
+    # ★固定デスクトップフォルダ（ご指定の場所）
+    cands += [FIXED_ICON_DIR / n for n in default_names]
+
+    for p in cands:
+        try:
+            if p.exists() and p.is_file():
+                return p
+        except Exception:
+            pass
+    return None
+
+X_ICON_URI    = logo_to_data_uri(find_icon_path(X_ICON_FILE_ENV,    ["X.png", "x.png", "x-logo.png"]))
+LINE_ICON_URI = logo_to_data_uri(find_icon_path(LINE_ICON_FILE_ENV, ["LINE.png", "line.png", "line-icon.png"]))
 
 # ========= 入力ファイル 読み込み・正規化（CSV/Excel自動対応） =========
 def _read_csv_auto(path: Path) -> pd.DataFrame:
@@ -331,15 +369,28 @@ header{
 .center-ttl{
   grid-area:title; font-weight:1000; text-align:center;
   font-size:clamp(28px, 5.2vw, 52px); line-height:1.05; color:#111;
-  writing-mode: horizontal-tb; 
-  text-orientation: mixed;
-  white-space: normal;
+  writing-mode: horizontal-tb; text-orientation: mixed; white-space: normal;
 }
 .right-spacer{display:none}
 .actions{grid-area:actions;display:flex;align-items:center;gap:10px;justify-content:flex-end}
 .iconbtn{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--border);background:#fff;color:#111;border-radius:12px;padding:9px 12px;text-decoration:none;font-size:13px;transition:transform .12s ease, background .12s ease}
 .iconbtn:hover{background:#f9fafb; transform:translateY(-1px)}
 .iconbtn svg{width:16px;height:16px;display:block;color:#111}
+
+/* 画像アイコンボタン（X/LINE 用） */
+.iconimg{
+  display:inline-flex;align-items:center;justify-content:center;
+  border:1px solid var(--border);background:#fff;color:#111;
+  border-radius:12px;padding:6px; text-decoration:none;
+  transition:transform .12s ease, background .12s ease
+}
+.iconimg:hover{background:#f9fafb; transform:translateY(-1px)}
+.iconimg img{width:22px;height:22px;display:block}
+
+@media (max-width:700px){
+  .iconimg{ padding:6px }
+  .iconimg img{ width:20px; height:20px }
+}
 
 /* === layout === */
 .wrap{max-width:1200px;margin:0 auto;padding:12px 16px}
@@ -400,14 +451,13 @@ input.search:focus{ box-shadow:0 0 0 2px rgba(17,24,39,.08) }
   position:absolute; top:-12px; right:-12px; background:#fff; border:1px solid var(--border); color:#111;
   border-radius:999px; width:38px; height:38px; cursor:pointer;
 }
-/* ビューワ表示中は背面スクロール停止 */
 body.modal-open{ overflow:hidden; }
 
 /* ===== ページネーション（PC=左/中央/右、SP=2行） ===== */
 nav.simple{ margin:14px 0; }
 nav.simple .pager{
   display:grid;
-  grid-template-columns:auto 1fr auto; /* 左 / 中央 / 右 */
+  grid-template-columns:auto 1fr auto;
   align-items:center;
   gap:12px;
 }
@@ -437,21 +487,21 @@ nav.simple .controls-mobile{ display:none; }
   nav.simple .pager{
     display:flex; flex-direction:column; gap:6px;
   }
-  nav.simple .left, nav.simple .right{ display:none; } /* PC用左右は隠す */
+  nav.simple .left, nav.simple .right{ display:none; }
 
   /* 数字：横スクロール＋端見切れ防止 */
   nav.simple .center{
     order:1; justify-content:center; flex-wrap:nowrap; overflow-x:auto; max-width:100%;
     -webkit-overflow-scrolling: touch;
-    padding-inline:10px;             /* 端の数字が切れない */
-    scroll-padding-inline:10px;      /* スクロール末端での見切れ防止 */
+    padding-inline:10px;
+    scroll-padding-inline:10px;
     gap:6px;
   }
   nav.simple .center::-webkit-scrollbar{ display:none; }
   nav.simple .center .num,
   nav.simple .center .ellipsis{ flex:0 0 auto; }
 
-  /* 2行目：最初/前/次/最後（文言変更なし / 見切れ防止） */
+  /* 2行目：最初/前/次/最後 */
   nav.simple .controls-mobile{
     order:2; display:flex; flex-wrap:nowrap; justify-content:center;
     gap:4px; padding:0 6px; max-width:100%; overflow:hidden;
@@ -697,7 +747,6 @@ base_js = r"""
     page=1; render();
   }
 
-  // ページ番号：PC=前後3 / SP=前後2
   function buildPageButtons(cur, total){
     const around = matchMedia('(max-width: 700px)').matches ? 2 : 3;
     const btns = [];
@@ -716,8 +765,6 @@ base_js = r"""
     return btns;
   }
 
-  // PC：左(最初/前) | 中央(数字) | 右(次/最後)
-  // SP：上(数字) / 下(最初 前 次 最後)
   function renderPager(cur, total){
     const first = (cur>1)
       ? `<a href="#" data-jump="first" class="first">≪ 最初のページ</a>`
@@ -771,7 +818,7 @@ base_js = r"""
           if(!src) return; 
           viewerImg.src = src; 
           viewer.classList.add('show');
-          document.body.classList.add('modal-open');   // ← 追加：背面スクロール停止
+          document.body.classList.add('modal-open');
         });
       });
     }
@@ -837,7 +884,7 @@ base_js = r"""
   function closeViewer(){
     viewer.classList.remove('show');
     viewerImg.src='';
-    document.body.classList.remove('modal-open');  // ← 追加：スクロール再開
+    document.body.classList.remove('modal-open');
   }
   viewerClose?.addEventListener('click', closeViewer);
   viewer?.addEventListener('click', (e)=>{ if(e.target===viewer) closeViewer(); });
@@ -870,6 +917,11 @@ def html_page(title: str, js_source: str, logo_uri: str, cards_json: str) -> str
     parts.append("<div class='actions'>")
     parts.append(f"<a class='iconbtn' href='https://www.climax-card.jp/' target='_blank' rel='noopener'>{shop_svg}<span>Shop</span></a>")
     parts.append(f"<a class='iconbtn' href='https://www.climax-card.jp/member-login' target='_blank' rel='noopener'>{login_svg}<span>Login</span></a>")
+    # ★X/LINE（見つかったときだけ表示）
+    if X_ICON_URI:
+        parts.append(f"<a class='iconimg' href='https://x.com/climaxcard' target='_blank' rel='noopener'><img src='{X_ICON_URI}' alt='X'></a>")
+    if LINE_ICON_URI:
+        parts.append(f"<a class='iconimg' href='https://line.me/R/ti/p/@512nwjvn' target='_blank' rel='noopener'><img src='{LINE_ICON_URI}' alt='LINE'></a>")
     parts.append("</div></div></header>")
     parts.append("<main class='wrap'>")
     parts.append("<div class='controls'>")
@@ -918,4 +970,6 @@ write_mode("price_asc",  "'asc'",  "デュエマ買取表（price_asc）")
 print(f"[*] Excel/CSV: {EXCEL_PATH!r}")
 print(f"[*] PER_PAGE={PER_PAGE}  BUILD_THUMBS={'1' if BUILD_THUMBS else '0'}")
 print(f"[LOGO] {'embedded' if LOGO_URI else 'not found (fallback text used)'}")
+print(f"[X ICON] {'embedded' if X_ICON_URI else 'not found'}")
+print(f"[LINE ICON] {'embedded' if LINE_ICON_URI else 'not found'}")
 print(f"[OK] 生成完了 → {OUT_DIR.resolve()} / 総件数{len(df)}")
