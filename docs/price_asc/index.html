@@ -82,13 +82,28 @@ nav.simple strong{color:#111;user-select:none}
 
 /* ===== SPは2行（ロゴ/タイトル/スペーサー + アクション）に戻す ===== */
 @media (max-width:700px){
-  :root{ --header-h: 144px; }
-  .header-wrap{
-    grid-template-columns:auto 1fr auto;
-    grid-template-areas:
-      "logo title spacer"
-      "actions actions actions";
+  /* ...既存... */
+
+  /* ← ページタブが見切れないように横スクロール */
+  nav.simple{
+    gap:8px;
+    justify-content:flex-start;    /* 両端揃えだと切れやすいので先頭寄せ */
+    flex-wrap:nowrap;               /* 改行させず */
+    overflow-x:auto;                /* 横スクロールON */
+    -webkit-overflow-scrolling:touch;
+    padding:6px 10px;               /* スクロール余白 */
   }
+  nav.simple::-webkit-scrollbar{ display:none; } /* iOS/Androidでスクロールバー非表示 */
+
+  nav.simple a, nav.simple strong{
+    display:inline-block;           /* タブのように並べる */
+    min-width:2.2em;                /* 指で押しやすい幅 */
+    text-align:center;
+  }
+
+  /* ...既存... */
+}
+
   .brand-left img{height:56px}
   .right-spacer{display:block; grid-area:spacer;}
   .actions{justify-content:center}
