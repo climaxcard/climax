@@ -99,7 +99,7 @@ def file_to_data_uri(p: Path|None) -> str:
 
 LOGO_URI = file_to_data_uri(find_logo_path())
 
-# ---- X/LINE 画像探索（assets / CWD / スクリプト隣 / 固定デスクトップ / 環境変数）----
+# ---- X/LINE 画像探索 ----
 def find_icon_path(env_path: str, default_names: list[str]):
     cands = []
     if env_path:
@@ -124,7 +124,7 @@ def find_icon_path(env_path: str, default_names: list[str]):
 X_ICON_URI    = file_to_data_uri(find_icon_path(X_ICON_FILE_ENV,    ["X.png", "x.png", "x-logo.png"]))
 LINE_ICON_URI = file_to_data_uri(find_icon_path(LINE_ICON_FILE_ENV, ["LINE.png", "line.png", "line-icon.png"]))
 
-# ========= 入力ファイル 読み込み・正規化（CSV/Excel自動対応） =========
+# ========= 入力ファイル 読み込み・正規化 =========
 def _read_csv_auto(path: Path) -> pd.DataFrame:
     for enc in ("utf-8-sig", "cp932", "utf-8"):
         try:
@@ -339,75 +339,17 @@ def build_payload(df: pd.DataFrame) -> tuple[str,str]:
 
 CARDS_VER, CARDS_JSON = build_payload(df)
 
-# ========= 見た目（PC=1行／SP=2行） =========
+# ========= 見た目 =========
 base_css = """
-/* ======== SP（スマホ）ページャの横1列固定＆横スクロール ======== */
-@media (max-width:700px){
-  /* ページャ全体は縦積み（上：数字／下：操作）だが、各行は横1列キープ */
-  nav.simple .pager{
-    display:flex;
-    flex-direction:column;
-    gap:6px;
-  }
-
-  /* 数字の列（常に横並び・横スクロール） */
-  nav.simple .center{
-    order:1;
-    display:flex;
-    flex-direction:row;
-    align-items:center;
-    justify-content:center;
-    gap:6px;
-    flex-wrap:nowrap;
-    overflow-x:auto;                 /* ← 横に溢れたらスクロール */
-    -webkit-overflow-scrolling:touch;
-    padding-inline:10px;
-    scroll-padding-inline:10px;
-    white-space:nowrap;              /* ← 折返し禁止 */
-    writing-mode:horizontal-tb !important;
-    text-orientation:mixed !important;
-  }
-  nav.simple .center .num,
-  nav.simple .center .ellipsis{
-    flex:0 0 auto;
-    display:inline-flex;
-    align-items:center;
-    justify-content:center;
-    min-width:34px;                  /* ← ボタンが潰れて縦に割れないように */
-    height:30px;
-  }
-
-  /* 「最初/前/次/最後」の列（横1列キープ・横スクロール） */
-  nav.simple .controls-mobile{
-    order:2;
-    display:flex;
-    flex-direction:row;
-    justify-content:center;
-    gap:6px;
-    flex-wrap:nowrap;
-    padding:0 6px;
-    overflow-x:auto;                 /* ← 横スクロール */
-    -webkit-overflow-scrolling:touch;
-    white-space:nowrap;              /* ← 折返し禁止 */
-  }
-  nav.simple .controls-mobile a,
-  nav.simple .controls-mobile button{
-    flex:0 0 auto;
-    white-space:nowrap;              /* 念のため */
-  }
-
-  /* PC用の左右ブロックは非表示のまま */
-  nav.simple .left, nav.simple .right{ display:none; }
-}
-
 *{box-sizing:border-box}
 :root{
   --bg:#ffffff; --panel:#ffffff; --border:#e5e7eb; --accent:#e11d48;
   --text:#111111; --muted:#6b7280; --header-h: 120px;
 }
-body{ margin:0;color:var(--text);background:var(--bg);
-      font-family:Inter,system-ui,'Noto Sans JP',sans-serif;
-      padding-top: calc(var(--header-h) + 8px); /* ← ヘッダー被り保険 */
+body{
+  margin:0;color:var(--text);background:var(--bg);
+  font-family:Inter,system-ui,'Noto Sans JP',sans-serif;
+  padding-top: calc(var(--header-h) + 8px); /* ← ヘッダー被り保険 */
 }
 
 /* === header === */
@@ -427,21 +369,14 @@ header{
 .center-ttl{
   grid-area:title;
   font-weight:1000; text-align:center;
-  font-size:clamp(28px, 5.2vw, 52px);
-  line-height:1.1; color:#111;
-  white-space:normal;
+  font-size:clamp(28px, 5.2vw, 52px); line-height:1.05; color:#111;
+  white-space: normal;
 
-  /* 横書き固定 */
-  writing-mode:horizontal-tb !important;
-  text-orientation:mixed !important;
-
-  /* 不自然な縦割り防止 */
-  word-break:keep-all;
-  overflow-wrap:normal;   /* ← anywhere をやめる */
-  line-break:strict;
+  /* 横書き固定（スマホで縦にならないよう強制） */
+  writing-mode: horizontal-tb !important;
+  text-orientation: mixed !important;
+  word-break: keep-all;
 }
-
-
 .right-spacer{display:none}
 .actions{grid-area:actions;display:flex;align-items:center;gap:10px;justify-content:flex-end}
 .iconbtn{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--border);background:#fff;color:#111;border-radius:12px;padding:9px 12px;text-decoration:none;font-size:13px;transition:transform .12s ease, background .12s ease}
@@ -457,7 +392,7 @@ header{
   line-height:0;
 }
 .iconimg:hover{ background:#f9fafb; transform:translateY(-1px); }
-/* 枠サイズ：32x32（要望の小さめ＆同一サイズ） */
+/* 枠サイズ：32x32 */
 .iconimg--x, .iconimg--line{ width:32px; height:32px; padding:0; }
 /* 中の画像：余白なしで枠トリミング */
 .iconimg--x img{    display:block; width:118%; height:118%; object-fit:cover; }
@@ -517,15 +452,28 @@ input.search:focus{ box-shadow:0 0 0 2px rgba(17,24,39,.08) }
 }
 body.modal-open{ overflow:hidden; }
 
+/* ===== ページネーション（PC=左/中央/右） ===== */
 /* ===== ページネーション（PC=左/中央/右、SP=2行） ===== */
 nav.simple{ margin:14px 0; }
+
+/* ★ここを修正：PCは中央を絶対センターにするため 1fr auto 1fr に */
 nav.simple .pager{
-  display:grid; grid-template-columns:auto 1fr auto; align-items:center; gap:12px;
+  display:grid;
+  grid-template-columns: 1fr auto 1fr;   /* ← 修正（元: auto 1fr auto） */
+  align-items:center;
+  gap:12px;
 }
-nav.simple .left, nav.simple .center, nav.simple .right{
+
+/* 左右は端に寄せる／中央はど真ん中 */
+nav.simple .left,
+nav.simple .center,
+nav.simple .right{
   display:flex; align-items:center; gap:8px; flex-wrap:wrap;
 }
-nav.simple .center{ justify-content:center; }
+nav.simple .left  { justify-content:flex-start; }  /* ← 追加 */
+nav.simple .center{ justify-content:center; }      /* 既存 */
+nav.simple .right { justify-content:flex-end; }    /* ← 追加 */
+
 nav.simple a, nav.simple button{
   color:#111;background:#fff;border:1px solid var(--border);
   padding:6px 12px;border-radius:10px;text-decoration:none;white-space:nowrap;font-size:13px;line-height:1;cursor:pointer
@@ -537,54 +485,133 @@ nav.simple .ellipsis{border:none;background:transparent;cursor:default;padding:0
 /* SP二段（上：数字／下：最初/前/次/最後） */
 nav.simple .controls-mobile{ display:none; }
 
-/* ======== SP 調整 ======== */
+/* ======== SP 調整（既存のままでOK） ======== */
 @media (max-width:700px){
-  :root{ --header-h: 144px; }
+  /* SPは2段：上が数字・下が最初/前/次/最後。各行は横1列キープ */
+  nav.simple .pager{
+    display:flex;
+    flex-direction:column;
+    gap:6px;
+  }
 
-  .header-wrap{
-    /* 2段（上：ロゴ・タイトル・スペーサ／下：アクション） */
-    grid-template-columns:auto 1fr auto;
-    grid-template-areas:
-      "logo title spacer"
-      "actions actions actions";
+  nav.simple .left, nav.simple .right{ display:none; }
+
+  /* 数字行：横並び・中央寄せ・横スクロール */
+  nav.simple .center{
+    order:1;
+    display:flex;
+    flex-direction:row;
     align-items:center;
-  }
-
-  .brand-left img{ height:56px; }
-
-  .right-spacer{
-    display:block;
-    grid-area:spacer;
-  }
-
-  .actions{
-    grid-area:actions;
     justify-content:center;
-    gap:8px;
-    flex-wrap:wrap;        /* はみ出し防止で折り返し許可 */
+    gap:6px;
+    flex-wrap:nowrap;
+    overflow-x:auto;
+    -webkit-overflow-scrolling:touch;
+    padding-inline:10px;
+    scroll-padding-inline:10px;
+    white-space:nowrap;
+    writing-mode:horizontal-tb !important;
+    text-orientation:mixed !important;
+    margin-inline:auto;             /* ← 念のため中央に据える */
+  }
+  nav.simple .center .num,
+  nav.simple .center .ellipsis{
+    flex:0 0 auto;
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    min-width:34px;
+    height:30px;
   }
 
-  /* タイトルはスマホサイズ用にフォントのみ調整（横書きは上の !important が効きます） */
-  .center-ttl{ font-size:clamp(24px, 7vw, 36px); }
-
-  .wrap{ padding:4px }
-  .grid.grid-img{ gap:2px }
-  .b{ padding:6px }
-  .n{ font-size:12px }
-  .n .code{ font-size:11px; padding:1px 6px; border-radius:6px }
-  .mx{ font-size:clamp(12px, 4.2vw, 16px); white-space:nowrap }
+  /* 操作行：横1列・必要なら横スクロール */
+  nav.simple .controls-mobile{
+    order:2;
+    display:flex;
+    flex-direction:row;
+    justify-content:center;
+    gap:6px;
+    flex-wrap:nowrap;
+    padding:0 6px;
+    overflow-x:auto;
+    -webkit-overflow-scrolling:touch;
+    white-space:nowrap;
+  }
 }
 
 
-/* ===== SPレイアウト（ヘッダ2段等） ===== */
+/* === ここから：スマホ用ページャ横1列固定（数字行／操作行）※必ずCSSの末尾に置く === */
+@media (max-width:700px){
+  nav.simple .pager{
+    display:flex !important;
+    flex-direction:column !important;
+    gap:6px !important;
+  }
+  /* PC用左右は隠す */
+  nav.simple .left,
+  nav.simple .right{
+    display:none !important;
+  }
 
+  /* 数字の行（横並び固定＋横スクロール） */
+  nav.simple .center{
+    order:1;
+    display:flex !important;
+    flex-direction:row !important;
+    align-items:center !important;
+    justify-content:center !important;
+    gap:6px !important;
+    flex-wrap:nowrap !important;
+    overflow-x:auto;
+    -webkit-overflow-scrolling:touch;
+    padding-inline:10px;
+    scroll-padding-inline:10px;
+    white-space:nowrap !important;
+    writing-mode:horizontal-tb !important;
+    text-orientation:mixed !important;
+  }
+  nav.simple .center .num,
+  nav.simple .center .ellipsis{
+    flex:0 0 auto;
+    display:inline-flex !important;
+    align-items:center;
+    justify-content:center;
+    min-width:34px;
+    height:30px;
+  }
+
+  /* 「最初/前/次/最後」の行（横並び固定＋横スクロール） */
+  nav.simple .controls-mobile{
+    order:2;
+    display:flex !important;
+    flex-direction:row !important;
+    justify-content:center !important;
+    gap:6px !important;
+    flex-wrap:nowrap !important;
+    padding:0 6px;
+    overflow-x:auto;
+    -webkit-overflow-scrolling:touch;
+    white-space:nowrap !important;
+    writing-mode:horizontal-tb !important;
+    text-orientation:mixed !important;
+  }
+  nav.simple .controls-mobile a,
+  nav.simple .controls-mobile button{
+    flex:0 0 auto;
+    white-space:nowrap !important;
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    height:30px;
+  }
+}
 small.note{color:var(--muted)}
 """
 
 # ========= JS =========
 base_js = r"""
 (function(){
-  // --- ヘッダー高さを CSS 変数に反映（画像や折り返しで変動しても追従） ---
+  // --- ヘッダー高さを CSS 変数に反映 ---
   const header = document.querySelector('header');
   const setHeaderH = () => {
     const h = header?.getBoundingClientRect().height || 144;
@@ -696,8 +723,8 @@ base_js = r"""
     _rarity_lat:      normalizeLatin(it.rarity || "")
   }));
 
-  let VIEW=[]; 
-  let page=1; 
+  let VIEW=[];
+  let page=1;
   let currentSort=__INITIAL_SORT__;
 
   function shrinkPrices(root=document){
@@ -806,43 +833,53 @@ base_js = r"""
     const around = matchMedia('(max-width: 700px)').matches ? 2 : 3;
     const btns = [];
     btns.push({type:'num', page:1});
-
     const start = Math.max(2, cur - around);
     const end   = Math.min(total - 1, cur + around);
-
     if (start > 2) btns.push({type:'ellipsis'});
     for (let p = start; p <= end; p++){
       if (p >= 2 && p <= total-1) btns.push({type:'num', page:p});
     }
     if (end < total - 1) btns.push({type:'ellipsis'});
-
     if (total > 1) btns.push({type:'num', page:total});
     return btns;
   }
 
-  function renderPager(cur, total){
-    const first = (cur>1)  ? `<a href="#" data-jump="first" class="first">≪ 最初のページ</a>` : `<a class="disabled">≪ 最初のページ</a>`;
-    const prev  = (cur>1)  ? `<a href="#" data-jump="prev"  class="prev">← 前のページ</a>` : `<a class="disabled">← 前のページ</a>`;
-    const next  = (cur<total) ? `<a href="#" data-jump="next"  class="next">次のページ →</a>` : `<a class="disabled">次のページ →</a>`;
-    const last  = (cur<total) ? `<a href="#" data-jump="last"  class="last">最後のページ ≫</a>` : `<a class="disabled">最後のページ ≫</a>`;
+  // --- 追加：幅変更で再描画（ファイル先頭の即時関数内でOK） ---
+const mqlForPager = matchMedia('(max-width: 700px)');
+mqlForPager.addEventListener?.('change', () => { render(); });
 
-    const nums = buildPageButtons(cur, total).map(item=>{
-      if (item.type==='ellipsis') return `<span class="ellipsis">…</span>`;
-      const p=item.page;
-      return (p===cur)
-        ? `<button class="num" aria-current="page" aria-label="現在のページ ${p}" disabled>${p}</button>`
-        : `<a class="num" href="#" data-page="${p}" aria-label="ページ ${p}">${p}</a>`;
-    }).join(' ');
+// --- 置き換え：renderPager（PCとSPで描画を出し分ける） ---
+function renderPager(cur, total){
+  const mob = matchMedia('(max-width: 700px)').matches;
 
-    return `
-      <div class="pager">
-        <div class="left">${first} ${prev}</div>
-        <div class="center">${nums}</div>
-        <div class="right">${next} ${last}</div>
-        <div class="controls-mobile">${first} ${prev} ${next} ${last}</div>
-      </div>
-    `;
-  }
+  const first = (cur>1)     ? `<a href="#" data-jump="first" class="first">≪ 最初のページ</a>` : `<a class="disabled">≪ 最初のページ</a>`;
+  const prev  = (cur>1)     ? `<a href="#" data-jump="prev"  class="prev">← 前のページ</a>`   : `<a class="disabled">← 前のページ</a>`;
+  const next  = (cur<total) ? `<a href="#" data-jump="next"  class="next">次のページ →</a>`   : `<a class="disabled">次のページ →</a>`;
+  const last  = (cur<total) ? `<a href="#" data-jump="last"  class="last">最後のページ ≫</a>`  : `<a class="disabled">最後のページ ≫</a>`;
+
+  const nums = buildPageButtons(cur, total).map(item=>{
+    if (item.type==='ellipsis') return `<span class="ellipsis">…</span>`;
+    const p=item.page;
+    return (p===cur)
+      ? `<button class="num" aria-current="page" aria-label="現在のページ ${p}" disabled>${p}</button>`
+      : `<a class="num" href="#" data-page="${p}" aria-label="ページ ${p}">${p}</a>`;
+  }).join(' ');
+
+  // PCは left/center/right、SPは center + controls-mobile のみ
+  const left   = mob ? '' : `<div class="left">${first} ${prev}</div>`;
+  const right  = mob ? '' : `<div class="right">${next} ${last}</div>`;
+  const mobile = mob ? `<div class="controls-mobile">${first} ${prev} ${next} ${last}</div>` : '';
+
+  return `
+    <div class="pager">
+      ${left}
+      <div class="center">${nums}</div>
+      ${right}
+      ${mobile}
+    </div>
+  `;
+}
+
 
   function scrollTopSmooth(){ window.scrollTo({ top: 0, behavior: 'smooth' }); }
 
@@ -942,7 +979,7 @@ base_js = r"""
 
 # ===== HTML =====
 def html_page(title: str, js_source: str, logo_uri: str, cards_json: str) -> str:
-    shop_svg = "<svg viewBox='0 0 24 24' aria-hidden='true' fill='currentColor'><path d='M3 9.5V8l2.2-3.6c.3-.5.6-.7 1-.7h11.6c.4 0 .7.2 .9 .6L21 8v1.5c0 1-.8 1.8-1.8 1.8-.9 0-1.6-.6-1.8-1.4-.2 .8-.9 1.4-1.8 1.4s-1.6-.6-1.8-1.4c-.2 .8-.9 1.4-1.8 1.4s-1.6-.6-1.8-1.4c-.2 .8-.9 1.4-1.8 1.4C3.8 11.3 3 10.5 3 9.5zM5 12.5h14V20c0 .6-.4 1-1 1H6c-.6 0-1-.4-1-1v-7.5zm4 1.5v5h6v-5H9zM6.3 5.2 5 7.5h14l-1.3-2.3H6.3z'/></svg>"
+    shop_svg = "<svg viewBox='0 0 24 24' aria-hidden='true' fill='currentColor'><path d='M3 9.5V8l2.2-3.6c.3-.5.6-.7 1-.7h11.6c.4 0 .7.2 .9 .6L21 8v1.5c0 1-.8 1.8-1.8 1.8-.9 0-1.6-.6-1.8-1.4-.2 .8-.9 1.4-1.8 1.4s-1.6-.6-1.8-1.4c-.2 .8-.9 1.4-1.8 1.4C3.8 11.3 3 10.5 3 9.5zM5 12.5h14V20c0 .6-.4 1-1 1H6c-.6 0-1-.4-1-1v-7.5zm4 1.5v5h6v-5H9zM6.3 5.2 5 7.5h14l-1.3-2.3H6.3z'/></svg>"
     login_svg= "<svg viewBox='0 0 24 24' aria-hidden='true' fill='currentColor'><path d='M12 12a5 5 0 1 0-5-5 5 5 0 0 0 5 5zm0 2c-4.418 0-8 2.239-8 5v2h16v-2c0-2.761-3.582-5-8-5z'/></svg>"
 
     parts = []
@@ -990,7 +1027,7 @@ def html_page(title: str, js_source: str, logo_uri: str, cards_json: str) -> str
     parts.append("</main>")
 
     parts.append("<script>")
-    parts.append("window.__CARDS__=" + cards_json + ";")
+    parts.append("window.__CARDS__=" + CARDS_JSON + ";")
     parts.append("</script>")
 
     parts.append("<div id='viewer' class='viewer'><div class='vc'><img id='viewerImg' alt=''><button id='viewerClose' class='close'>×</button></div></div>")
