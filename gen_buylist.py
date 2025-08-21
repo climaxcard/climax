@@ -366,10 +366,17 @@ header{
 .brand-left{grid-area:logo;display:flex;align-items:center;gap:12px;min-width:0}
 .brand-left img{height:80px;display:block}
 .center-ttl{
-  grid-area:title; font-weight:1000; text-align:center;
+  grid-area:title;
+  font-weight:1000; text-align:center;
   font-size:clamp(28px, 5.2vw, 52px); line-height:1.05; color:#111;
   white-space: normal;
+  /* 追加：横書き強制＆不自然な縦割り防止 */
+  writing-mode: horizontal-tb !important;
+  text-orientation: mixed !important;
+  word-break: keep-all;          /* CJKの1文字折返しを抑制 */
+  overflow-wrap: anywhere;       /* スペースが無い場合の緊急折返し */
 }
+
 .right-spacer{display:none}
 .actions{grid-area:actions;display:flex;align-items:center;gap:10px;justify-content:flex-end}
 .iconbtn{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--border);background:#fff;color:#111;border-radius:12px;padding:9px 12px;text-decoration:none;font-size:13px;transition:transform .12s ease, background .12s ease}
@@ -467,21 +474,42 @@ nav.simple .controls-mobile{ display:none; }
 
 /* ======== SP 調整 ======== */
 @media (max-width:700px){
-  nav.simple .pager{ display:flex; flex-direction:column; gap:6px; }
-  nav.simple .left, nav.simple .right{ display:none; }
-  nav.simple .center{
-    order:1; justify-content:center; flex-wrap:nowrap; overflow-x:auto; max-width:100%;
-    -webkit-overflow-scrolling: touch; padding-inline:10px; scroll-padding-inline:10px; gap:6px;
+  :root{ --header-h: 144px; }
+
+  .header-wrap{
+    /* 2段（上：ロゴ・タイトル・スペーサ／下：アクション） */
+    grid-template-columns:auto 1fr auto;
+    grid-template-areas:
+      "logo title spacer"
+      "actions actions actions";
+    align-items:center;
   }
-  nav.simple .center::-webkit-scrollbar{ display:none; }
-  nav.simple .center .num, nav.simple .center .ellipsis{ flex:0 0 auto; }
-  nav.simple .controls-mobile{
-    order:2; display:flex; flex-wrap:nowrap; justify-content:center; gap:4px; padding:0 6px; max-width:100%; overflow:hidden;
+
+  .brand-left img{ height:56px; }
+
+  .right-spacer{
+    display:block;
+    grid-area:spacer;
   }
-  nav.simple .controls-mobile a, nav.simple .controls-mobile button{
-    padding:4px 6px; font-size:11px; border-radius:6px; white-space:nowrap;
+
+  .actions{
+    grid-area:actions;
+    justify-content:center;
+    gap:8px;
+    flex-wrap:wrap;        /* はみ出し防止で折り返し許可 */
   }
+
+  /* タイトルはスマホサイズ用にフォントのみ調整（横書きは上の !important が効きます） */
+  .center-ttl{ font-size:clamp(24px, 7vw, 36px); }
+
+  .wrap{ padding:4px }
+  .grid.grid-img{ gap:2px }
+  .b{ padding:6px }
+  .n{ font-size:12px }
+  .n .code{ font-size:11px; padding:1px 6px; border-radius:6px }
+  .mx{ font-size:clamp(12px, 4.2vw, 16px); white-space:nowrap }
 }
+
 
 /* ===== SPレイアウト（ヘッダ2段等） ===== */
 @media (max-width:700px){
