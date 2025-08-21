@@ -67,8 +67,10 @@ input.search:focus{ box-shadow:0 0 0 2px rgba(17,24,39,.08) }
 .mx{font-weight:1000;color:var(--accent);font-size:clamp(16px, 2.4vw, 22px);line-height:1.05;text-shadow:none;white-space:nowrap;display:inline-block;max-width:100%}
 .grid.grid-img .meta{display:none}
 
-/* ページネーション */
-nav.simple{display:flex;justify-content:center;align-items:center;margin:14px 0;gap:8px;flex-wrap:wrap}
+/* ===== ページネーション（PC=1行 / SP=2行） ===== */
+nav.simple{
+  display:flex;justify-content:center;align-items:center;margin:14px 0;gap:12px;flex-wrap:wrap
+}
 nav.simple a, nav.simple button{
   color:#111;background:#fff;border:1px solid var(--border);padding:6px 12px;border-radius:10px;
   text-decoration:none;white-space:nowrap;font-size:13px;line-height:1;cursor:pointer
@@ -79,13 +81,13 @@ nav.simple .num[aria-current="page"]{
 }
 nav.simple .ellipsis{border:none;background:transparent;cursor:default;padding:0 4px}
 
-.viewer{position:fixed; inset:0; background:rgba(0,0,0,.86); display:none; align-items:center; justify-content:center; z-index:2000}
-.viewer.show{display:flex}
-.viewer .vc{position:relative;max-width:92vw;max-height:92vh}
-.viewer img{max-width:92vw;max-height:92vh;display:block}
-.viewer button.close{position:absolute;top:-12px;right:-12px;background:#fff;border:1px solid var(--border);color:#111;border-radius:999px;width:38px;height:38px;cursor:pointer}
+/* PCでは nums と prevnext を横並び（同一行） */
+nav.simple .nums,
+nav.simple .prevnext{
+  display:flex;align-items:center;gap:8px;flex-wrap:wrap
+}
 
-/* ===== SPは2行（ロゴ/タイトル/スペーサー + アクション）に戻す ===== */
+/* ===== SPは2行（1行目: 数字／2行目: 前次） ===== */
 @media (max-width:700px){
   :root{ --header-h: 144px; }
   .header-wrap{
@@ -104,7 +106,17 @@ nav.simple .ellipsis{border:none;background:transparent;cursor:default;padding:0
   .n{font-size:12px}
   .n .code{font-size:11px;padding:1px 6px;border-radius:6px}
   .mx{ font-size:clamp(12px, 4.2vw, 16px); white-space:nowrap }
-  nav.simple{gap:6px; flex-wrap:nowrap; overflow:auto; padding:6px 2px}
+
+  nav.simple{
+    flex-direction:column;        /* ← 2行構成に変更 */
+    gap:6px;
+  }
+  nav.simple .nums{
+    order:1; justify-content:center; flex-wrap:nowrap; overflow:auto; max-width:100%;
+  }
+  nav.simple .prevnext{
+    order:2; justify-content:center; gap:10px;
+  }
   nav.simple a, nav.simple button{ padding:6px 10px; font-size:12px }
 }
 small.note{color:var(--muted)}
@@ -317,62 +329,45 @@ small.note{color:var(--muted)}
     page=1; render();
   }
 
+  // 1 … (前後3) … 最終
   function buildPageButtons(cur, total){
-    const around = 3; // ← ご要望：前後3ページ
+    const around = 3;
     const btns = [];
-
-    // 1ページ目
     btns.push({type:'num', page:1});
-
-    // 左側省略
     const start = Math.max(2, cur - around);
     const end   = Math.min(total - 1, cur + around);
-
     if (start > 2) btns.push({type:'ellipsis'});
-
     for (let p = start; p <= end; p++){
-      if (p >= 2 && p <= total-1){
-        btns.push({type:'num', page:p});
-      }
+      if (p >= 2 && p <= total-1) btns.push({type:'num', page:p});
     }
-
     if (end < total - 1) btns.push({type:'ellipsis'});
-
-    // 最終ページ
     if (total > 1) btns.push({type:'num', page:total});
-
     return btns;
   }
 
+  // PCは1行、SPはCSSで2行（上: 数字 / 下: 前次）に自動分割
   function renderPager(cur, total){
     const prev = cur>1 ? `<a href="#" data-jump="prev" class="prev">← 前のページ</a>` : `<a class="disabled">← 前のページ</a>`;
     const next = cur<total ? `<a href="#" data-jump="next" class="next">次のページ →</a>` : `<a class="disabled">次のページ →</a>`;
 
-    const parts = [];
-    parts.push(prev);
+    const nums = buildPageButtons(cur, total).map(item=>{
+      if (item.type==='ellipsis') return `<span class="ellipsis">…</span>`;
+      const p=item.page;
+      return (p===cur)
+        ? `<button class="num" aria-current="page" aria-label="現在のページ ${p}" disabled>${p}</button>`
+        : `<a class="num" href="#" data-page="${p}" aria-label="ページ ${p}">${p}</a>`;
+    }).join(' ');
 
-    // 数字タブ
-    const items = buildPageButtons(cur, total);
-    items.forEach(item=>{
-      if (item.type==='ellipsis'){
-        parts.push(`<span class="ellipsis">…</span>`);
-      } else {
-        const p = item.page;
-        if (p === cur){
-          parts.push(`<button class="num" aria-current="page" aria-label="現在のページ ${p}" disabled>${p}</button>`);
-        } else {
-          parts.push(`<a class="num" href="#" data-page="${p}" aria-label="ページ ${p}">${p}</a>`);
-        }
-      }
-    });
-
-    parts.push(next);
-    return parts.join(' ');
+    // 2グループ構成（PCは横並び、SPは縦2行）
+    return `
+      <div class="nums">${nums}</div>
+      <div class="prevnext">${prev} ${next}</div>
+    `;
   }
 
-  function scrollTopSmooth(){
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  }
+  function scrollTopSmooth(){ window.scrollTo({ top: 0, behavior: 'smooth' }); }
+
+  let page=1; let currentSort='asc';
 
   function render(){
     grid.className = showImages ? 'grid grid-img' : 'grid grid-list';
