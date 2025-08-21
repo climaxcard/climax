@@ -410,9 +410,24 @@ input.search:focus{ box-shadow:0 0 0 2px rgba(17,24,39,.08) }
 .n .code{flex:0 0 auto;margin-left:0;font-weight:700;font-size:12px;color:#374151;background:#f3f4f6;border:1px solid #e5e7eb;border-radius:8px;padding:2px 6px;white-space:nowrap}
 
 .meta{font-size:11px;color:var(--muted);word-break:break-word}
-.p{margin-top:6px;display:flex;flex-wrap:wrap}
-.mx{font-weight:1000;color:var(--accent);font-size:clamp(16px, 2.4vw, 22px);line-height:1.05;white-space:nowrap;display:inline-block;max-width:100%}
-.grid.grid-img .meta{display:none}
+.p{
+  margin-top:6px;
+  display:flex;
+  flex-wrap:nowrap;      /* ← 価格を1行死守（折り返し禁止） */
+  width:100%;
+}
+.mx{
+  font-weight:1000;
+  color:var(--accent);
+  font-size:clamp(16px, 2.4vw, 22px);
+  line-height:1.05;
+  white-space:nowrap;
+  display:inline-block;
+  max-width:100%;
+  font-variant-numeric: tabular-nums; /* 桁揃えで読みやすく */
+  letter-spacing:-0.02em;             /* わずかに詰める（初期値） */
+  will-change: transform;             /* スケール最適化のヒント */
+}
 
 /* === 画像ビューワ === */
 .viewer{position: fixed; inset: 0; background: rgba(0,0,0,.86); display: none; align-items: center; justify-content: center; z-index: 2000;}
@@ -667,15 +682,42 @@ base_js = r"""
   let currentSort=__INITIAL_SORT__;
 
   function shrinkPrices(root=document){
-    const MIN_PX = 10;
-    root.querySelectorAll('.mx').forEach(el=>{
-      const style = window.getComputedStyle(el);
-      let size = parseFloat(style.fontSize) || 14;
-      const fits = () => el.scrollWidth <= el.clientWidth;
-      if (fits()) return;
-      while (!fits() && size > MIN_PX) { size -= 1; el.style.fontSize = size + 'px'; }
-    });
-  }
+  const MIN_PX = 9; // ← 10 → 9 に少しだけ許容を広げる
+  root.querySelectorAll('.mx').forEach(el=>{
+    const style = window.getComputedStyle(el);
+    let size = parseFloat(style.fontSize) || 14;
+
+    // 毎回リセットしてから再計算
+    el.style.letterSpacing = '-0.02em';
+    el.style.transform = '';
+    el.style.transformOrigin = 'left center';
+
+    const fits = () => el.scrollWidth <= el.clientWidth;
+
+    // まずはフォントサイズを段階的に縮小
+    if (!fits()){
+      while (!fits() && size > MIN_PX) {
+        size -= 1;
+        el.style.fontSize = size + 'px';
+      }
+    }
+
+    // まだ溢れるなら字詰めをもう少しだけ強める
+    if (!fits()){
+      el.style.letterSpacing = '-0.04em';
+    }
+
+    // それでもダメな最終手段：横方向を軽くスケール（視認性を保つため 0.85 まで）
+    if (!fits()){
+      let scale = 0.98;
+      while (!fits() && scale > 0.85) {
+        el.style.transform = `scale(${scale})`;
+        scale -= 0.02;
+      }
+    }
+  });
+}
+
 
   // ==== カードHTML ====
   function cardHTML_img(it){
