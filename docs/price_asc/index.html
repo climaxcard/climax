@@ -1,4 +1,63 @@
 <!doctype html><html lang='ja'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><style>
+/* ======== SP（スマホ）ページャの横1列固定＆横スクロール ======== */
+@media (max-width:700px){
+  /* ページャ全体は縦積み（上：数字／下：操作）だが、各行は横1列キープ */
+  nav.simple .pager{
+    display:flex;
+    flex-direction:column;
+    gap:6px;
+  }
+
+  /* 数字の列（常に横並び・横スクロール） */
+  nav.simple .center{
+    order:1;
+    display:flex;
+    flex-direction:row;
+    align-items:center;
+    justify-content:center;
+    gap:6px;
+    flex-wrap:nowrap;
+    overflow-x:auto;                 /* ← 横に溢れたらスクロール */
+    -webkit-overflow-scrolling:touch;
+    padding-inline:10px;
+    scroll-padding-inline:10px;
+    white-space:nowrap;              /* ← 折返し禁止 */
+    writing-mode:horizontal-tb !important;
+    text-orientation:mixed !important;
+  }
+  nav.simple .center .num,
+  nav.simple .center .ellipsis{
+    flex:0 0 auto;
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    min-width:34px;                  /* ← ボタンが潰れて縦に割れないように */
+    height:30px;
+  }
+
+  /* 「最初/前/次/最後」の列（横1列キープ・横スクロール） */
+  nav.simple .controls-mobile{
+    order:2;
+    display:flex;
+    flex-direction:row;
+    justify-content:center;
+    gap:6px;
+    flex-wrap:nowrap;
+    padding:0 6px;
+    overflow-x:auto;                 /* ← 横スクロール */
+    -webkit-overflow-scrolling:touch;
+    white-space:nowrap;              /* ← 折返し禁止 */
+  }
+  nav.simple .controls-mobile a,
+  nav.simple .controls-mobile button{
+    flex:0 0 auto;
+    white-space:nowrap;              /* 念のため */
+  }
+
+  /* PC用の左右ブロックは非表示のまま */
+  nav.simple .left, nav.simple .right{ display:none; }
+}
+
 *{box-sizing:border-box}
 :root{
   --bg:#ffffff; --panel:#ffffff; --border:#e5e7eb; --accent:#e11d48;
