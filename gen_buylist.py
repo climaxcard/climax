@@ -315,6 +315,7 @@ base_css = """
 }
 body{ margin:0;color:var(--text);background:var(--bg);font-family:Inter,system-ui,'Noto Sans JP',sans-serif; padding-top: var(--header-h); }
 
+/* === header === */
 header{
   position:fixed;top:0;left:0;right:0;z-index:1000;background:#fff;border-bottom:1px solid var(--border);
   padding:10px 16px; box-shadow:0 2px 10px rgba(0,0,0,.04);
@@ -330,7 +331,6 @@ header{
 .center-ttl{
   grid-area:title; font-weight:1000; text-align:center;
   font-size:clamp(28px, 5.2vw, 52px); line-height:1.05; color:#111;
-  /* ← タイトル縦書き化の予防（強制的に横書き） */
   writing-mode: horizontal-tb; 
   text-orientation: mixed;
   white-space: normal;
@@ -341,6 +341,7 @@ header{
 .iconbtn:hover{background:#f9fafb; transform:translateY(-1px)}
 .iconbtn svg{width:16px;height:16px;display:block;color:#111}
 
+/* === layout === */
 .wrap{max-width:1200px;margin:0 auto;padding:12px 16px}
 .controls{
   display:grid;grid-template-columns:repeat(2, minmax(180px,1fr));
@@ -360,12 +361,12 @@ input.search:focus{ box-shadow:0 0 0 2px rgba(17,24,39,.08) }
 .btn:hover{background:#f9fafb; transform:translateY(-1px)}
 .btn.active{outline:2px solid var(--accent)}
 
+/* === cards === */
 .grid{margin:12px 0;width:100%}
 .grid.grid-img{display:grid;grid-template-columns:repeat(4, minmax(0,1fr));gap:12px}
 .grid.grid-list{display:grid;grid-template-columns:repeat(2, minmax(0,1fr));gap:12px}
 .card{
   background:var(--panel);border:1px solid var(--border);border-radius:14px;overflow:hidden;box-shadow:0 4px 10px rgba(0,0,0,.04);transition:transform .15s ease, box-shadow .15s ease;
-  content-visibility:auto; contain-intrinsic-size: 600px 800px;
 }
 .card:hover{transform:translateY(-2px);box-shadow:0 10px 20px rgba(0,0,0,.06)}
 .th{aspect-ratio:3/4;background:#f3f4f6;cursor:zoom-in}
@@ -379,6 +380,28 @@ input.search:focus{ box-shadow:0 0 0 2px rgba(17,24,39,.08) }
 .p{margin-top:6px;display:flex;flex-wrap:wrap}
 .mx{font-weight:1000;color:var(--accent);font-size:clamp(16px, 2.4vw, 22px);line-height:1.05;text-shadow:none;white-space:nowrap;display:inline-block;max-width:100%}
 .grid.grid-img .meta{display:none}
+
+/* === 画像ビューワ（オーバーレイ）=== */
+.viewer{
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.86);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+}
+.viewer.show{ display: flex; }
+.viewer .vc{ position: relative; max-width: 92vw; max-height: 92vh; }
+.viewer img{
+  display:block; max-width:92vw; max-height:92vh; width:auto; height:auto; object-fit:contain;
+}
+.viewer button.close{
+  position:absolute; top:-12px; right:-12px; background:#fff; border:1px solid var(--border); color:#111;
+  border-radius:999px; width:38px; height:38px; cursor:pointer;
+}
+/* ビューワ表示中は背面スクロール停止 */
+body.modal-open{ overflow:hidden; }
 
 /* ===== ページネーション（PC=左/中央/右、SP=2行） ===== */
 nav.simple{ margin:14px 0; }
@@ -411,50 +434,31 @@ nav.simple .controls-mobile{ display:none; }
 
 /* ======== SP 調整 ======== */
 @media (max-width:700px){
-  /* ナビを2行構成に */
   nav.simple .pager{
-    display:flex;
-    flex-direction:column;
-    gap:6px;
+    display:flex; flex-direction:column; gap:6px;
   }
-  nav.simple .left,
-  nav.simple .right{ display:none; }   /* PC用左右は隠す */
+  nav.simple .left, nav.simple .right{ display:none; } /* PC用左右は隠す */
 
-  /* 1行目：数字（横スクロール・折り返しなし）
-     → 端が見切れないよう左右に余白＆scroll-padding を付与 */
+  /* 数字：横スクロール＋端見切れ防止 */
   nav.simple .center{
-    order:1;
-    justify-content:center;
-    flex-wrap:nowrap;
-    overflow-x:auto;
-    max-width:100%;
+    order:1; justify-content:center; flex-wrap:nowrap; overflow-x:auto; max-width:100%;
     -webkit-overflow-scrolling: touch;
-    padding-inline: 10px;           /* ← 端の数字が切れないための内側余白 */
-    scroll-padding-inline: 10px;    /* ← スクロール末端での見切れ防止 */
+    padding-inline:10px;             /* 端の数字が切れない */
+    scroll-padding-inline:10px;      /* スクロール末端での見切れ防止 */
     gap:6px;
   }
   nav.simple .center::-webkit-scrollbar{ display:none; }
-  /* 数字自体を折り返し・圧縮させない */
   nav.simple .center .num,
   nav.simple .center .ellipsis{ flex:0 0 auto; }
 
-  /* 2行目：最初/前/次/最後（文言そのまま、見切れ防止） */
+  /* 2行目：最初/前/次/最後（文言変更なし / 見切れ防止） */
   nav.simple .controls-mobile{
-    order:2;
-    display:flex;
-    flex-wrap:nowrap;
-    justify-content:center;
-    gap:4px;          
-    padding:0 6px;    /* ← 端の見切れをさらにケア */
-    max-width:100%;
-    overflow:hidden;
+    order:2; display:flex; flex-wrap:nowrap; justify-content:center;
+    gap:4px; padding:0 6px; max-width:100%; overflow:hidden;
   }
   nav.simple .controls-mobile a,
   nav.simple .controls-mobile button{
-    padding:4px 6px;
-    font-size:11px;
-    border-radius:6px;
-    white-space:nowrap;
+    padding:4px 6px; font-size:11px; border-radius:6px; white-space:nowrap;
   }
 }
 
@@ -480,7 +484,6 @@ nav.simple .controls-mobile{ display:none; }
 }
 small.note{color:var(--muted)}
 """
-
 
 # ========= JS =========
 base_js = r"""
@@ -694,7 +697,7 @@ base_js = r"""
     page=1; render();
   }
 
-  // 1 … (前後2 or 3) … 最終
+  // ページ番号：PC=前後3 / SP=前後2
   function buildPageButtons(cur, total){
     const around = matchMedia('(max-width: 700px)').matches ? 2 : 3;
     const btns = [];
@@ -718,19 +721,19 @@ base_js = r"""
   function renderPager(cur, total){
     const first = (cur>1)
       ? `<a href="#" data-jump="first" class="first">≪ 最初のページ</a>`
-      : `<a class="first disabled">≪ 最初のページ</a>`;
+      : `<a class="disabled">≪ 最初のページ</a>`;
 
     const prev = (cur>1)
       ? `<a href="#" data-jump="prev" class="prev">← 前のページ</a>`
-      : `<a class="prev disabled">← 前のページ</a>`;
+      : `<a class="disabled">← 前のページ</a>`;
 
     const next = (cur<total)
       ? `<a href="#" data-jump="next" class="next">次のページ →</a>`
-      : `<a class="next disabled">次のページ →</a>`;
+      : `<a class="disabled">次のページ →</a>`;
 
     const last = (cur<total)
       ? `<a href="#" data-jump="last" class="last">最後のページ ≫</a>`
-      : `<a class="last disabled">最後のページ ≫</a>`;
+      : `<a class="disabled">最後のページ ≫</a>`;
 
     const nums = buildPageButtons(cur, total).map(item=>{
       if (item.type==='ellipsis') return `<span class="ellipsis">…</span>`;
@@ -765,7 +768,10 @@ base_js = r"""
       grid.querySelectorAll('.th').forEach(th=>{
         th.addEventListener('click', ()=>{
           const src = th.getAttribute('data-full') || th.querySelector('img')?.src || '';
-          if(!src) return; viewerImg.src = src; viewer.classList.add('show');
+          if(!src) return; 
+          viewerImg.src = src; 
+          viewer.classList.add('show');
+          document.body.classList.add('modal-open');   // ← 追加：背面スクロール停止
         });
       });
     }
@@ -779,10 +785,10 @@ base_js = r"""
         if (a.matches('.disabled,[disabled]')) return;
         e.preventDefault();
 
-        if (a.dataset.jump === 'first') { page = 1;                  render(); scrollTopSmooth(); return; }
+        if (a.dataset.jump === 'first') { page = 1;      render(); scrollTopSmooth(); return; }
         if (a.dataset.jump === 'prev')  { page = Math.max(1, page-1); render(); scrollTopSmooth(); return; }
         if (a.dataset.jump === 'next')  { page = Math.min(pages, page+1); render(); scrollTopSmooth(); return; }
-        if (a.dataset.jump === 'last')  { page = pages;              render(); scrollTopSmooth(); return; }
+        if (a.dataset.jump === 'last')  { page = pages;  render(); scrollTopSmooth(); return; }
 
         const p = parseInt(a.dataset.page || '0', 10);
         if (p && p !== page){ page = p; render(); scrollTopSmooth(); }
@@ -828,7 +834,11 @@ base_js = r"""
   function onInputDebounced(el){ el.addEventListener('input', ()=>{ clearTimeout(el._t); el._t=setTimeout(apply,DEBOUNCE); }); }
   [nameQ, codeQ, packQ, rarityQ].forEach(onInputDebounced);
 
-  function closeViewer(){ viewer.classList.remove('show'); viewerImg.src=''; }
+  function closeViewer(){
+    viewer.classList.remove('show');
+    viewerImg.src='';
+    document.body.classList.remove('modal-open');  // ← 追加：スクロール再開
+  }
   viewerClose?.addEventListener('click', closeViewer);
   viewer?.addEventListener('click', (e)=>{ if(e.target===viewer) closeViewer(); });
   window.addEventListener('keydown', (e)=>{ if(e.key==='Escape') closeViewer(); });
@@ -841,7 +851,7 @@ base_js = r"""
 
 # ===== HTML =====
 def html_page(title: str, js_source: str, logo_uri: str, cards_json: str) -> str:
-    shop_svg = "<svg viewBox='0 0 24 24' aria-hidden='true' fill='currentColor'><path d='M3 9.5V8l2.2-3.6c.3-.5.6-.7 1-.7h11.6c.4 0 .7.2.9.6L21 8v1.5c0 1-.8 1.8-1.8 1.8-.9 0-1.6-.6-1.8-1.4-.2.8-.9 1.4-1.8 1.4s-1.6-.6-1.8-1.4c-.2.8-.9 1.4-1.8 1.4s-1.6-.6-1.8-1.4c-.2.8-.9 1.4-1.8 1.4C3.8 11.3 3 10.5 3 9.5zM5 12.5h14V20c0 .6-.4 1-1 1H6c-.6 0-1-.4-1-1v-7.5zm4 1.5v5h6v-5H9zM6.3 5.2 5 7.5h14l-1.3-2.3H6.3z'/></svg>"
+    shop_svg = "<svg viewBox='0 0 24 24' aria-hidden='true' fill='currentColor'><path d='M3 9.5V8l2.2-3.6c.3-.5.6-.7 1-.7h11.6c.4 0 .7.2 .9 .6L21 8v1.5c0 1-.8 1.8-1.8 1.8-.9 0-1.6-.6-1.8-1.4-.2 .8-.9 1.4-1.8 1.4s-1.6-.6-1.8-1.4c-.2 .8-.9 1.4-1.8 1.4s-1.6-.6-1.8-1.4c-.2 .8-.9 1.4-1.8 1.4C3.8 11.3 3 10.5 3 9.5zM5 12.5h14V20c0 .6-.4 1-1 1H6c-.6 0-1-.4-1-1v-7.5zm4 1.5v5h6v-5H9zM6.3 5.2 5 7.5h14l-1.3-2.3H6.3z'/></svg>"
     login_svg= "<svg viewBox='0 0 24 24' aria-hidden='true' fill='currentColor'><path d='M12 12a5 5 0 1 0-5-5 5 5 0 0 0 5 5zm0 2c-4.418 0-8 2.239-8 5v2h16v-2c0-2.761-3.582-5-8-5z'/></svg>"
 
     parts = []
