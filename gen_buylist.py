@@ -368,14 +368,20 @@ header{
 .center-ttl{
   grid-area:title;
   font-weight:1000; text-align:center;
-  font-size:clamp(28px, 5.2vw, 52px); line-height:1.05; color:#111;
-  white-space: normal;
-  /* 追加：横書き強制＆不自然な縦割り防止 */
-  writing-mode: horizontal-tb !important;
-  text-orientation: mixed !important;
-  word-break: keep-all;          /* CJKの1文字折返しを抑制 */
-  overflow-wrap: anywhere;       /* スペースが無い場合の緊急折返し */
+  font-size:clamp(28px, 5.2vw, 52px);
+  line-height:1.1; color:#111;
+  white-space:normal;
+
+  /* 横書き固定 */
+  writing-mode:horizontal-tb !important;
+  text-orientation:mixed !important;
+
+  /* 不自然な縦割り防止 */
+  word-break:keep-all;
+  overflow-wrap:normal;   /* ← anywhere をやめる */
+  line-break:strict;
 }
+
 
 .right-spacer{display:none}
 .actions{grid-area:actions;display:flex;align-items:center;gap:10px;justify-content:flex-end}
@@ -512,23 +518,7 @@ nav.simple .controls-mobile{ display:none; }
 
 
 /* ===== SPレイアウト（ヘッダ2段等） ===== */
-@media (max-width:700px){
-  :root{ --header-h: 144px; }
-  .header-wrap{
-    grid-template-columns:auto 1fr auto;
-    grid-template-areas:
-      "logo title actions";
-  }
-  .brand-left img{height:56px}
-  .actions{justify-content:center}
-  .center-ttl{ font-size:clamp(24px, 7vw, 36px) }
-  .wrap{ padding:4px }
-  .grid.grid-img{ gap:2px }
-  .b{padding:6px}
-  .n{font-size:12px}
-  .n .code{font-size:11px;padding:1px 6px;border-radius:6px}
-  .mx{ font-size:clamp(12px, 4.2vw, 16px); white-space:nowrap }
-}
+
 small.note{color:var(--muted)}
 """
 
