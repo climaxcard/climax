@@ -205,7 +205,7 @@ def kata_to_hira(text: str) -> str:
 
 def normalize_for_search_py(s: str) -> str:
     s0 = nfkc_lower(s)
-    s0 = s0.replace("complex", "こんぷれっくす").replace("c0br4", "こぶら").replace("伝説", "でんせつ").replace("魔弾の名", "えぴたふ")
+    s0 = s0.replace("complex", "こんぷれっくす").replace("c0br4", "こぶら").replace("魔弾の名", "えぴたふ").replace("伝説", "でんせつ")
     s0 = kata_to_hira(s0)
     s0 = SEP_RE.sub("", s0)
     return s0
@@ -536,7 +536,7 @@ base_js = r"""
 
   const SEP_RE = /[\s\u30FB\u00B7·/／\-_—–−]+/g;
   function kataToHira(str){ return (str||'').replace(/[\u30A1-\u30FA]/g, ch => String.fromCharCode(ch.charCodeAt(0)-0x60)); }
-  const kanjiReadingMap = { "伝説":"でんせつ" };
+  const kanjiReadingMap = { "伝説":"でんせつ","魔弾の名":"えぴたふ"};
   const latinAliasMap = { "complex": "こんぷれっくす", "c0br4": "こぶら" };
 
   function normalizeForSearch(s){
