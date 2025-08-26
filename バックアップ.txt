@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
 r"""
-デュエマ買取表 静的ページ生成（完成版：PC=ロゴ/見出し拡大＆アクション1行、SP=価格固定＆ページャ最適化）
+デュエマ買取表 静的ページ生成（完成版：仮査定カート + LINE送信・LIFF/ディープリンク両対応）
 - CSV/Excel 自動対応。二重ヘッダ(日本語/英語キー)も自動正規化
 - 列は「ヘッダ名優先 → 位置フォールバック(C/E/F/G/H/O/Q)」
-- 画像URLは Q列系（allow_auto_print_label 等）最優先。=IMAGE() 抽出にも対応
-- 画像ON時は「カード名＋型番＋買取価格のみ」表示（スマホ最適化：型番はバッジ・nowrap）
-- ロゴは LOGO_FILE 環境変数 or assets/logo.png を最優先で埋め込み（base64）
-- 見出しは 2段ヘッダー（PC: 1行 / SP: 2行）。高さはJSで測って被り防止
-- ページネーション：PC=左(最初/前)・中央(数字)・右(次/最後)、SP=数字→最初/前/次/最後の2行（重複表示なし）
-- 追加：PCでロゴ/タイトル拡大＆Shop/Login/X/LINEを1行固定、SPで買取金額をカード下に固定
+- 画像URLは Q列などから自動抽出 (=IMAGE() もOK)
+- PC/SP最適化＆高速ページャ／画像lazy
+- 🛒 カート機能（LocalStorage）・数量変更・削除・合計
+- 「LINEに送る」：
+    * LIFF内（LINEアプリ内）：liff.sendMessages() 一発送信
+    * 普通のブラウザ：公式OA宛ディープリンクでLINE起動＆下書き付き遷移
 """
 
 from pathlib import Path
@@ -26,7 +26,7 @@ except Exception:
     requests = None
     Image = None
 
-# ========= 設定 =========
+# ========= 基本設定 =========
 DEFAULT_EXCEL = "buylist.xlsx"
 ALT_EXCEL     = "data/buylist.xlsx"
 FALLBACK_WINDOWS = r"C:\Users\user\Desktop\デュエマ買取表\buylist.xlsx"
@@ -38,9 +38,11 @@ OUT_DIR    = Path(os.getenv("OUT_DIR", "docs"))
 PER_PAGE   = int(os.getenv("PER_PAGE", "80"))
 BUILD_THUMBS = os.getenv("BUILD_THUMBS", "0") == "1"
 
-LOGO_FILE_ENV = os.getenv("LOGO_FILE", "").strip()
+# ====== LIFF / 送信先（必要に応じて変更）======
+LIFF_ID = os.getenv("LIFF_ID", "2007983559-MKopknXd")  # あなたのLIFF ID
+OA_ID   = os.getenv("OA_ID",   "@512nwjvn")            # 公式LINEのID（@含む）
 
-# X / LINE アイコン（任意）
+LOGO_FILE_ENV = os.getenv("LOGO_FILE", "").strip()
 X_ICON_FILE_ENV    = os.getenv("X_ICON_FILE", "").strip()
 LINE_ICON_FILE_ENV = os.getenv("LINE_ICON_FILE", "").strip()
 FIXED_ICON_DIR = Path(r"C:\Users\user\OneDrive\Desktop\デュエマ買取表")
@@ -345,8 +347,7 @@ header{
   padding:10px 16px; box-shadow:0 2px 10px rgba(0,0,0,.04);
 }
 .header-wrap{
-  max-width:1080px;
-  margin:0 auto;display:grid;gap:8px;width:100%;
+  max-width:1080px;margin:0 auto;display:grid;gap:8px;width:100%;
   grid-template-columns:auto 1fr auto;
   grid-template-areas: "logo title actions";
   align-items:center;
@@ -354,14 +355,10 @@ header{
 .brand-left{grid-area:logo;display:flex;align-items:center;gap:12px;min-width:0}
 .brand-left img{height:80px;display:block}
 .center-ttl{
-  grid-area:title;
-  font-weight:1000; text-align:center;
+  grid-area:title;font-weight:1000; text-align:center;
   font-size:clamp(28px, 5.2vw, 52px); line-height:1.05; color:#111;
-  white-space: normal;
-  writing-mode: horizontal-tb !important;
-  text-orientation: mixed !important;
-  word-break: keep-all;
-  overflow-wrap: normal;
+  white-space: normal; writing-mode: horizontal-tb !important;
+  text-orientation: mixed !important; word-break: keep-all; overflow-wrap: normal;
 }
 .right-spacer{display:none}
 .actions{grid-area:actions;display:flex;align-items:center;gap:10px;justify-content:flex-end}
@@ -370,28 +367,17 @@ header{
 .iconbtn svg{width:16px;height:16px;display:block;color:#111}
 
 /* X/LINE画像アイコン */
-.iconimg{
-  display:inline-flex;align-items:center;justify-content:center;
-  border:1px solid var(--border);background:#fff;color:#111;border-radius:12px;text-decoration:none;overflow:hidden;transition:transform .12s ease, background .12s ease;line-height:0;
-}
+.iconimg{display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--border);background:#fff;color:#111;border-radius:12px;text-decoration:none;overflow:hidden;transition:transform .12s ease, background .12s ease;line-height:0;}
 .iconimg:hover{ background:#f9fafb; transform:translateY(-1px); }
 .iconimg--x, .iconimg--line{ width:32px; height:32px; padding:0; }
-.iconimg--x img{    display:block; width:118%; height:118%; object-fit:cover; }
-.iconimg--line img{ display:block; width:145%; height:145%; object-fit:cover; }
+.iconimg--x img{ width:118%; height:118%; object-fit:cover; }
+.iconimg--line img{ width:145%; height:145%; object-fit:cover; }
 
 /* === layout === */
 .wrap{max-width:1200px;margin:0 auto;padding:12px 16px}
-.controls{
-  display:grid;grid-template-columns:repeat(2, minmax(180px,1fr));
-  grid-template-areas: "q1 q2" "q3 q4" "acts acts";
-  gap:10px;margin:10px 0 14px;align-items:center;
-}
-#nameQ{grid-area:q1}
-#codeQ{grid-area:q2}
-#packQ{grid-area:q3}
-#rarityQ{grid-area:q4}
+.controls{display:grid;grid-template-columns:repeat(2, minmax(180px,1fr));grid-template-areas:"q1 q2" "q3 q4" "acts acts";gap:10px;margin:10px 0 14px;align-items:center;}
+#nameQ{grid-area:q1} #codeQ{grid-area:q2} #packQ{grid-area:q3} #rarityQ{grid-area:q4}
 .controls .btns{ grid-area:acts; display:flex; gap:8px; flex-wrap:wrap }
-
 input.search{background:#fff;border:1px solid var(--border);color:#111;border-radius:12px;padding:11px 12px;font-size:14px;outline:none;min-width:0;transition:box-shadow .12s ease;width:100%}
 input.search::placeholder{color:#9ca3af}
 input.search:focus{ box-shadow:0 0 0 2px rgba(17,24,39,.08) }
@@ -408,37 +394,21 @@ input.search:focus{ box-shadow:0 0 0 2px rgba(17,24,39,.08) }
 .th{aspect-ratio:3/4;background:#f3f4f6;cursor:zoom-in}
 .th img{width:100%;height:100%;object-fit:cover;display:block;background:#f3f4f6}
 .b{padding:10px 12px}
-
-/* カード名：2行クランプ＋コード衝突回避 */
 .n{font-size:14px;font-weight:800;line-height:1.25;margin:0 0 6px;color:#111;display:flex;gap:6px;align-items:flex-start;flex-wrap:nowrap;word-break:break-word}
-.n .ttl{
-  flex:1 1 auto; min-width:0;
-  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
-  word-break:keep-all; overflow-wrap:anywhere; line-height:1.25;
-}
+.n .ttl{flex:1 1 auto; min-width:0; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; word-break:keep-all; overflow-wrap:anywhere; line-height:1.25;}
 .n .code{flex:0 0 auto;margin-left:0;font-weight:700;font-size:12px;color:#374151;background:#f3f4f6;border:1px solid #e5e7eb;border-radius:8px;padding:2px 6px;white-space:nowrap}
-
 .meta{font-size:11px;color:var(--muted);word-break:break-word}
-.p{
-  margin-top:6px;
-  display:flex;
-  flex-wrap:nowrap;      /* 価格を1行死守（折り返し禁止） */
-  width:100%;
-}
-.mx{
-  font-weight:1000;
-  color:var(--accent);
-  font-size:clamp(16px, 2.4vw, 22px);
-  line-height:1.05;
-  white-space:nowrap;
-  display:inline-block;
-  max-width:100%;
-  font-variant-numeric: tabular-nums;
-  letter-spacing:-0.02em;
-  will-change: transform;
+.p{margin-top:6px;display:flex;flex-wrap:nowrap;width:100%;}
+.mx{font-weight:1000;color:var(--accent);font-size:clamp(16px, 2.4vw, 22px);line-height:1.05;white-space:nowrap;display:inline-block;max-width:100%;font-variant-numeric: tabular-nums;letter-spacing:-0.02em;}
+.card .actrow{display:flex;gap:8px;margin-top:8px}
+.card .actrow .mini{padding:6px 10px;font-size:12px;border-radius:10px}
+
+/* スマホの「買取カートへ」が収まるように縮小 */
+@media (max-width:700px){
+  .card .actrow .mini{ padding:4px 8px; font-size:11px; line-height:1.1; letter-spacing:0; }
 }
 
-/* === 画像ビューワ === */
+/* === viewer === */
 .viewer{position: fixed; inset: 0; background: rgba(0,0,0,.86); display: none; align-items: center; justify-content: center; z-index: 2000;}
 .viewer.show{ display: flex; }
 .viewer .vc{ position: relative; max-width: 92vw; max-height: 92vh; }
@@ -446,448 +416,341 @@ input.search:focus{ box-shadow:0 0 0 2px rgba(17,24,39,.08) }
 .viewer button.close{ position:absolute; top:-12px; right:-12px; background:#fff; border:1px solid var(--border); color:#111; border-radius:999px; width:38px; height:38px; cursor:pointer; }
 body.modal-open{ overflow:hidden; }
 
-/* ===== ページネーション（PC=左/中央/右、SP=数字+操作） ===== */
+/* === pager === */
 nav.simple{ margin:14px 0; }
-nav.simple .pager{
-  display:grid; 
-  grid-template-columns: 1fr auto 1fr;  /* 左/中央/右 */
-  align-items:center; 
-  gap:12px;
-}
-nav.simple .left, 
-nav.simple .center, 
-nav.simple .right{
-  display:flex; 
-  align-items:center; 
-  gap:8px; 
-  flex-wrap:wrap;
-}
+nav.simple .pager{ display:grid; grid-template-columns: 1fr auto 1fr;  align-items:center; gap:12px; }
+nav.simple .left, nav.simple .center, nav.simple .right{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
 nav.simple .left{  justify-content:flex-start; }
-nav.simple .center{justify-content:center; }  /* 数字はど真ん中 */
+nav.simple .center{justify-content:center; } 
 nav.simple .right{ justify-content:flex-end; }
-
-nav.simple a, nav.simple button{
-  color:#111;background:#fff;border:1px solid var(--border);
-  padding:6px 12px;border-radius:10px;text-decoration:none;white-space:nowrap;font-size:13px;line-height:1;cursor:pointer
-}
+nav.simple a, nav.simple button{ color:#111;background:#fff;border:1px solid var(--border); padding:6px 12px;border-radius:10px;text-decoration:none;white-space:nowrap;font-size:13px;line-height:1;cursor:pointer }
 nav.simple a.disabled{opacity:.45;pointer-events:none}
 nav.simple .num[aria-current="page"]{ background:#111;color:#fff;border-color:#111;cursor:default }
 nav.simple .ellipsis{border:none;background:transparent;cursor:default;padding:0 4px}
-
-/* PCで “controls-mobile” は非表示（重複防止） */
 nav.simple .controls-mobile{ display:none !important; }
 
-/* ======== スマホ（～700px）：カード名見やすく・2行ページャ・価格を下固定 ======== */
+/* === SP調整（閉じ忘れ無しの完全版） === */
+/* ===== スマホ（～700px） ===== */
 @media (max-width:700px){
   :root{ --header-h: 144px; }
 
-  /* カード名：タイトルは行全幅、2行まで。型番バッジは2行目へ回す */
-  .n{ display:flex; flex-wrap:wrap !important; align-items:flex-start !important; }
-  .n .ttl{
-    flex:1 1 100% !important; min-width:0 !important;
-    display:-webkit-box !important; -webkit-box-orient:vertical !important; -webkit-line-clamp:2 !important; overflow:hidden !important;
-    white-space:normal !important; word-break:break-word !important; overflow-wrap:anywhere !important;
-  }
-  .n .code{ order:2 !important; margin-top:2px !important; font-size:10.5px !important; padding:1px 5px !important; border-radius:6px !important; }
+  /* タイトル2行・型番は2行目へ */
+  .n{ display:flex; flex-wrap:wrap; align-items:flex-start; }
+  .n .ttl{ flex:1 1 100%; min-width:0; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+  .n .code{ order:2; margin-top:2px; font-size:10.5px; padding:1px 5px; border-radius:6px; }
 
-  /* 価格をカード下に固定 */
+  /* カードの縦長感を抑える（価格行とボタン行を分離） */
   .card{ display:flex; flex-direction:column; }
   .th{ flex:0 0 auto; }
-  .b{  flex:1 1 auto; display:flex; flex-direction:column; }
-  .p{  margin-top:auto !important; padding-top:6px; justify-content:flex-start; }
-  .mx{ font-size:clamp(12px, 4vw, 16px) !important; }
+  .b{  flex:1 1 auto; display:flex; flex-direction:column; padding:6px !important; }
+  .p{  margin-top:auto; padding-top:6px; }
+  .mx{ font-size:clamp(12px, 4vw, 16px); min-width:0; overflow-wrap:anywhere; }
+  .card .actrow{ display:flex; gap:8px; margin-top:6px; }
+  .card .actrow .mini{ padding:6px 10px; font-size:12px; border-radius:10px; }
 
-  /* ヘッダー：1段目=ロゴ+タイトル / 2段目=アクション（中央寄せ） */
+  /* ヘッダー2段化＋中央寄せ（アクションは右寄せ・🛒バッジ付き） */
   .header-wrap{
-    grid-template-columns:auto 1fr !important;
-    grid-template-areas:
-      "logo title"
-      "actions actions" !important;
-    gap:8px !important; align-items:center !important;
+    grid-template-columns:auto 1fr;
+    grid-template-areas:"logo title" "actions actions";
+    gap:8px; align-items:center;
   }
-  .brand-left img{ height:48px !important; width:auto !important; }
-  .center-ttl{ margin-left:6px !important; font-size:clamp(22px, 6.2vw, 34px) !important; }
-  .actions{ grid-area:actions !important; width:100% !important; display:flex !important; justify-content:center !important; align-items:center !important; gap:8px !important; flex-wrap:wrap !important; padding-top:2px !important; }
-  .iconbtn{ padding:7px 10px !important; font-size:12px !important; border-radius:10px !important; }
-  .iconimg--x, .iconimg--line{ width:28px !important; height:28px !important; }
+  .brand-left img{ height:48px; width:auto; }
+  .center-ttl{ margin-left:6px; font-size:clamp(22px, 6.2vw, 34px); }
 
-  /* ページャ：数字（上）＋操作（下）を各1行に収める */
-  nav.simple .pager{ display:flex; flex-direction:column; gap:6px; }
-  nav.simple .left, nav.simple .right{ display:none; } /* PC用左右は隠す */
+  .actions{ grid-area:actions; display:flex; align-items:center; gap:8px; justify-content:flex-end; padding-right:8px; }
+  .iconbtn{ padding:7px 10px; font-size:12px; }
+  .iconimg--x, .iconimg--line{ width:28px; height:28px; }
+  .iconbtn--cart{ position:relative; display:inline-flex; align-items:center; gap:6px; }
+  .iconbtn--cart .badge{ background:#e11d48; color:#fff; border-radius:999px; padding:0 6px; font-size:11px; font-weight:800; line-height:1.4; }
+
+  /* ページ番号ピルは横スクロールで1行死守 */
+  nav.simple .left, nav.simple .right{ display:none; }
   nav.simple .center{
-    order:1; display:flex; flex-direction:row; align-items:center; justify-content:center;
-    gap:6px; flex-wrap:nowrap; overflow-x:auto; -webkit-overflow-scrolling:touch;
-    padding-inline:10px; scroll-padding-inline:10px; white-space:nowrap;
+    justify-content:center !important;
+    gap:6px !important;
+    flex-wrap:nowrap !important;
+    overflow-x:auto !important;
+    white-space:nowrap !important;
+    scrollbar-width:none !important;
   }
-  nav.simple .center .num, nav.simple .center .ellipsis{
-    flex:0 0 auto; display:inline-flex; align-items:center; justify-content:center; min-width:32px; height:28px;
+  nav.simple .center::-webkit-scrollbar{ display:none; }
+  nav.simple .center .num{
+    min-width:34px; height:30px; padding:0 8px;
+    font-size:14px; line-height:30px;
+    display:inline-flex; align-items:center; justify-content:center;
   }
-  nav.simple .controls-mobile{
-    order:2; display:flex; flex-direction:row; justify-content:center; align-items:center;
-    gap:4px; flex-wrap:nowrap; overflow-x:auto; -webkit-overflow-scrolling:touch;
-    padding-inline:8px; scroll-padding-inline:8px; white-space:nowrap;
-    font-size:10.5px; line-height:1; letter-spacing:0;
-  }
-  nav.simple .controls-mobile a,
-  nav.simple .controls-mobile button{
-    flex:0 0 auto; padding:3px 6px; border-radius:6px;
-  }
-
-  .wrap{ padding:4px }
-  .grid.grid-img{ gap:2px }
-  .b{ padding:6px }
-  .n{ font-size:12px !important; }
 }
 
-/* ==== PC専用：ロゴ＆タイトル拡大＋アクション1行固定 ==== */
+
+/* PC: ロゴ＆タイトル拡大 */
 @media (min-width:1024px){
   .brand-left img{ height:110px; }
   .center-ttl{ font-size:clamp(40px,4.6vw,72px); }
-  .actions{ flex-wrap:nowrap; } /* Shop / Login / X / LINE を1行に固定 */
+  .actions{ flex-wrap:nowrap; }
 }
 
 small.note{color:var(--muted)}
+
+/* カートモーダル */
+.cart-modal{ position:fixed; inset:0; background:rgba(0,0,0,.55); display:none; z-index:2100; align-items:center; justify-content:center; }
+.cart-modal.show{ display:flex; }
+.cart-sheet{ background:#fff; width:min(720px, 94vw); max-height:88vh; border-radius:14px; padding:12px; overflow:auto; }
+.cart-head{ display:flex; justify-content:space-between; align-items:center; gap:8px; padding-bottom:8px; border-bottom:1px solid var(--border); }
+.cart-list{ display:grid; gap:10px; padding:10px 0; }
+.cart-row{ display:grid; grid-template-columns: 1fr auto auto auto; gap:8px; align-items:center; border:1px solid var(--border); border-radius:10px; padding:8px; }
+.cart-row .nm{ font-weight:800 }
+.cart-row .qty{ display:flex; gap:6px; align-items:center }
+.cart-row .qty button{ padding:3px 8px }
+.cart-row .rm{ color:#b91c1c; border-color:#fecaca }
+.cart-foot{ display:flex; justify-content:space-between; align-items:center; gap:8px; padding-top:8px; border-top:1px solid var(--border) }
+.cart-act{ display:flex; gap:8px; flex-wrap:wrap }
 """
 
-# ========= JS =========
+# ========= JS（検索＋カート＋LINE送信） =========
 base_js = r"""
 (function(){
+  // ====== 設定 ======
+  const LIFF_ID = "__LIFF_ID__";
+  const OA_ID   = "__OA_ID__";  // 先頭 @ を含む
+
   // ヘッダー高さ反映
   const header = document.querySelector('header');
   const setHeaderH = () => {
     const h = header?.getBoundingClientRect().height || 144;
     document.documentElement.style.setProperty('--header-h', Math.ceil(h) + 'px');
   };
-  setHeaderH();
-  window.addEventListener('resize', setHeaderH);
-  window.addEventListener('load', setHeaderH);
-  document.querySelectorAll('header img').forEach(img => {
-    if (!img.complete) img.addEventListener('load', setHeaderH);
-  });
-  if ('ResizeObserver' in window && header) {
-    const ro = new ResizeObserver(() => setHeaderH());
-    ro.observe(header);
+  setHeaderH(); window.addEventListener('resize', setHeaderH); window.addEventListener('load', setHeaderH);
+  document.querySelectorAll('header img').forEach(img => { if (!img.complete) img.addEventListener('load', setHeaderH); });
+  if ('ResizeObserver' in window && header) { const ro = new ResizeObserver(() => setHeaderH()); ro.observe(header); }
+
+  // DOM
+  const nameQ=document.getElementById('nameQ'), codeQ=document.getElementById('codeQ'),
+        packQ=document.getElementById('packQ'), rarityQ=document.getElementById('rarityQ'),
+        grid=document.getElementById('grid'), navs=[...document.querySelectorAll('nav.simple')];
+  const btnDesc=document.getElementById('btnPriceDesc'), btnAsc=document.getElementById('btnPriceAsc'),
+        btnNone=document.getElementById('btnSortClear'), btnImg=document.getElementById('btnToggleImages');
+  const viewer=document.getElementById('viewer'), viewerImg=document.getElementById('viewerImg'), viewerClose=document.getElementById('viewerClose');
+
+  // ===== カートUI（重複無し・堅牢） =====
+  const fabCart  = document.getElementById('fabCart');
+  const fabBadge = document.getElementById('fabBadge');
+  const cartModal= document.getElementById('cartModal');
+  const cartList = document.getElementById('cartList');
+  const cartTotal= document.getElementById('cartTotal');
+  const cartSend = document.getElementById('cartSend');
+  const cartClose= document.getElementById('cartClose');
+  const cartClear= document.getElementById('cartClear');
+
+  const CART_KEY="climax_cart_v1";
+  let cart=[];
+
+  function loadCart(){ try{ cart=JSON.parse(localStorage.getItem(CART_KEY)||"[]"); }catch{ cart=[]; } updateFab(); }
+  function saveCart(){ localStorage.setItem(CART_KEY, JSON.stringify(cart)); updateFab(); }
+  function updateFab(){ if(fabBadge) fabBadge.textContent = String(cart.reduce((a,b)=>a+(+b.qty||1),0)); }
+
+  function addToCart(item){
+    const key=(item.name||"")+"|"+(item.code||"");
+    const f=cart.find(x=>((x.name||"")+"|"+(x.model||""))===key);
+    if(f){ f.qty=(f.qty||1)+1; }
+    else { cart.push({name:item.name, model:item.code||"", price:item.price||0, qty:1}); }
+    saveCart();
+  }
+  function delFromCart(idx){ cart.splice(idx,1); saveCart(); renderCartModal(); }
+  function incQty(idx,d){ cart[idx].qty=Math.max(1,(cart[idx].qty||1)+d); saveCart(); renderCartModal(); }
+  function totalPrice(){ return cart.reduce((s,i)=>s + (i.price||0)*(i.qty||1), 0); }
+
+  function escHtml(s){ return (s||'').replace(/[&<>\"']/g, m => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;" }[m])); }
+  function fmtYen(n){ return (n==null||n==='')?'-':('¥'+parseInt(n,10).toLocaleString()); }
+
+  function renderCartModal(){
+    if(!cartList||!cartTotal) return;
+    cartList.innerHTML = cart.map((it,idx)=>`
+      <div class="cart-row">
+        <div class="nm">${escHtml(it.name)}${it.model?` <small>[${escHtml(it.model)}]</small>`:''}</div>
+        <div class="pr">${it.price?`@${Number(it.price).toLocaleString()}円`:''}</div>
+        <div class="qty">
+          <button class="btn mini" data-a="dec" data-i="${idx}">－</button>
+          <span>${it.qty||1}</span>
+          <button class="btn mini" data-a="inc" data-i="${idx}">＋</button>
+        </div>
+        <button class="btn mini rm" data-a="rm" data-i="${idx}">削除</button>
+      </div>`).join('') || '<p style="color:#6b7280">カートは空です。</p>';
+    cartTotal.textContent = '合計：'+ totalPrice().toLocaleString() +'円';
   }
 
-  const nameQ  = document.getElementById('nameQ');
-  const codeQ  = document.getElementById('codeQ');
-  const packQ  = document.getElementById('packQ');
-  const rarityQ= document.getElementById('rarityQ');
-  const grid   = document.getElementById('grid');
-  const navs   = [...document.querySelectorAll('nav.simple')];
+  // 開閉（直接＋デリゲーションの二段構え）
+  if (fabCart) {
+    fabCart.addEventListener('click', (e)=>{ e.preventDefault(); renderCartModal(); cartModal?.classList.add('show'); });
+  }
+  document.addEventListener('click', (e)=>{
+    const trg = e.target.closest('#fabCart');
+    if(trg){ e.preventDefault(); renderCartModal(); cartModal?.classList.add('show'); }
+  });
+  cartClose?.addEventListener('click', ()=> cartModal?.classList.remove('show'));
+  cartModal?.addEventListener('click', (e)=>{ if(e.target===cartModal) cartModal.classList.remove('show'); });
 
-  const btnDesc  = document.getElementById('btnPriceDesc');
-  const btnAsc   = document.getElementById('btnPriceAsc');
-  const btnNone  = document.getElementById('btnSortClear');
-  const btnImg   = document.getElementById('btnToggleImages');
+  // 行内操作
+  cartList?.addEventListener('click', (e)=>{
+    const btn=e.target.closest('button[data-a]'); if(!btn) return;
+    const a=btn.dataset.a, i=+btn.dataset.i;
+    if(a==='inc') incQty(i,+1);
+    if(a==='dec') incQty(i,-1);
+    if(a==='rm')  delFromCart(i);
+  });
 
-  const viewer = document.getElementById('viewer');
-  const viewerImg = document.getElementById('viewerImg');
-  const viewerClose = document.getElementById('viewerClose');
+  // 「カートを空にする」
+  cartClear?.addEventListener('click', ()=>{
+    if(!cart.length){ alert('すでに空です'); return; }
+    if(!confirm('カートを空にしますか？')) return;
+    cart=[]; saveCart(); renderCartModal();
+  });
 
+  // ===== 端末状況 =====
   const isMobileConst = matchMedia('(max-width: 700px)').matches;
-  const netType = navigator.connection?.effectiveType || '';
-  const slowNet = /^(slow-2g|2g|3g)$/i.test(netType);
+  const netType = navigator.connection?.effectiveType || ''; const slowNet = /^(slow-2g|2g|3g)$/i.test(netType);
   const cores = navigator.hardwareConcurrency || 4;
-
   const __PER = __PER_PAGE__;
   const PER_PAGE_ADJ = (isMobileConst || slowNet || cores <= 4) ? Math.min(__PER, 48) : __PER;
 
-  function pick(nLo, nMd, nHi){
-    return (cores <= 4) ? nLo : ((isMobileConst || slowNet) ? nMd : nHi);
-  }
-  const eager1 = pick(4, 8, 16);
-  const eager2 = pick(8, 16, 32);
+  // 画像ON/OFF
+  let showImages = (localStorage.getItem('showImages') ?? '1') === '1';
+  function setImgBtn(){ if(!btnImg) return; btnImg.textContent = showImages?'画像OFF':'画像ON'; btnImg.classList.toggle('active', showImages); btnImg.setAttribute('aria-pressed', showImages?'true':'false'); }
+  function toggleImages(e){ if(e){e.preventDefault();e.stopPropagation();} showImages=!showImages; localStorage.setItem('showImages', showImages?'1':'0'); setImgBtn(); render(); }
 
-  // 初期：画像ON
-  let showImages;
-  let saved = localStorage.getItem('showImages');
-  if (saved === 'true')  { localStorage.setItem('showImages','1'); saved = '1'; }
-  if (saved === 'false') { localStorage.setItem('showImages','0'); saved = '0'; }
-  if (saved === null) showImages = true;
-  else showImages = (saved === '1');
-
-  const SEP_RE = /[\s\u30FB\u00B7·/／\-_—–−]+/g;
+  // 正規化
+  const SEP_RE=/[\s\u30FB\u00B7·/／\-_—–−]+/g;
   function kataToHira(str){ return (str||'').replace(/[\u30A1-\u30FA]/g, ch => String.fromCharCode(ch.charCodeAt(0)-0x60)); }
-  const kanjiReadingMap = { "伝説":"でんせつ" };
-  const latinAliasMap = { "complex": "こんぷれっくす", "c0br4": "こぶら" };
+  const kanjiReadingMap={ "伝説":"でんせつ" }, latinAliasMap={ "complex":"こんぷれっくす", "c0br4":"こぶら" };
+  function normalizeForSearch(s){ s=(s||'').normalize('NFKC').toLowerCase(); for(const[k,v]of Object.entries(latinAliasMap)) s=s.split(k).join(v); for(const[k,v]of Object.entries(kanjiReadingMap)) s=s.split(k).join(v); return kataToHira(s).replace(SEP_RE,''); }
+  function normalizeLatin(s){ s=(s||'').normalize('NFKC').toLowerCase().replace(/0/g,'o').replace(/1/g,'l').replace(/3/g,'e').replace(/4/g,'a').replace(/5/g,'s').replace(/7/g,'t').replace(SEP_RE,'').replace(/[^a-z0-9]/g,''); return s; }
 
-  function normalizeForSearch(s){
-    s = (s||'').normalize('NFKC').toLowerCase();
-    for(const [k,v] of Object.entries(latinAliasMap)){ s = s.split(k).join(v); }
-    for(const [k,v] of Object.entries(kanjiReadingMap)){ s = s.split(k).join(v); }
-    s = kataToHira(s).replace(SEP_RE, '');
-    return s;
-  }
-  function normalizeLatin(s){
-    s = (s||'').normalize('NFKC').toLowerCase()
-      .replace(/0/g,'o').replace(/1/g,'l').replace(/3/g,'e').replace(/4/g,'a').replace(/5/g,'s').replace(/7/g,'t')
-      .replace(SEP_RE, '').replace(/[^a-z0-9]/g,'');
-    return s;
-  }
-
-  function fmtYen(n){ return (n==null||n==='')?'-':('¥'+parseInt(n,10).toLocaleString()); }
-  function escHtml(s){
-    return (s||'').replace(/[&<>\"']/g, m => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", "\"":"&quot;", "'":"&#39;" }[m]));
-  }
-
-  function norm(it){
-    return {
-      name: it.n ?? it.name ?? "",
-      pack: it.p ?? it.pack ?? "",
-      code: it.c ?? it.code ?? "",
-      rarity: it.r ?? it.rarity ?? "",
-      booster: it.b ?? it.booster ?? "",
-      price: (it.pr ?? it.price ?? null),
-      image: it.i ?? it.image ?? "",
-      thumb: it.t ?? it.thumb ?? "",
-      s: it.s ?? ""
-    };
-  }
-  let ALL = Array.isArray(window.__CARDS__) ? window.__CARDS__.map(norm) : [];
-  if (!ALL.length) {
-    const hint = document.createElement('p');
-    hint.style.cssText='color:#dc2626;padding:10px;margin:10px;border:1px dashed #fecaca;background:#fff5f5';
-    hint.textContent = 'データが0件です。入力CSV/Excelのヘッダと列位置を確認してください。';
-    document.querySelector('main')?.prepend(hint);
-  }
-
-  ALL = ALL.map(it => ({
-    ...it,
-    _name:        normalizeForSearch(it.name || ""),
-    _code:        normalizeForSearch(it.code || ""),
-    _packbooster: normalizeForSearch([it.pack || "", it.booster || ""].join(" ")),
-    _rarity:      normalizeForSearch(it.rarity || ""),
-    _name_lat:        normalizeLatin(it.name || ""),
-    _code_lat:        normalizeLatin(it.code || ""),
-    _packbooster_lat: normalizeLatin([it.pack || "", it.booster || ""].join(" ")),
-    _rarity_lat:      normalizeLatin(it.rarity || "")
+  // データ
+  function norm(it){ return { name:it.n??it.name??"", pack:it.p??it.pack??"", code:it.c??it.code??"", rarity:it.r??it.rarity??"", booster:it.b??it.booster??"", price:(it.pr??it.price??null), image:it.i??it.image??"", thumb:it.t??it.thumb??"", s:it.s??"" }; }
+  let ALL = Array.isArray(window.__CARDS__)? window.__CARDS__.map(norm) : [];
+  if(!ALL.length){ const hint=document.createElement('p'); hint.style.cssText='color:#dc2626;padding:10px;margin:10px;border:1px dashed #fecaca;background:#fff5f5'; hint.textContent='データが0件です。入力CSV/Excelのヘッダと列位置を確認してください。'; document.querySelector('main')?.prepend(hint); }
+  ALL = ALL.map(it=>({ ...it,
+    _name:normalizeForSearch(it.name||""), _code:normalizeForSearch(it.code||""), _packbooster:normalizeForSearch([it.pack||"",it.booster||""].join(" ")), _rarity:normalizeForSearch(it.rarity||""),
+    _name_lat:normalizeLatin(it.name||""), _code_lat:normalizeLatin(it.code||""), _packbooster_lat:normalizeLatin([it.pack||"",it.booster||""].join(" ")), _rarity_lat:normalizeLatin(it.rarity||"")
   }));
 
-  let VIEW=[]; 
-  let page=1; 
-  let currentSort=__INITIAL_SORT__;
+  // ===== 検索・描画 =====
+  const SEP_HTML=' ・ ';
+  let VIEW=[], page=1, currentSort=__INITIAL_SORT__;
 
-  function shrinkPrices(root=document){
-    const MIN_PX = 9;
-    root.querySelectorAll('.mx').forEach(el=>{
-      const style = window.getComputedStyle(el);
-      let size = parseFloat(style.fontSize) || 14;
-
-      // リセット
-      el.style.letterSpacing = '-0.02em';
-      el.style.transform = '';
-      el.style.transformOrigin = 'left center';
-
-      const fits = () => el.scrollWidth <= el.clientWidth;
-
-      if (!fits()){
-        while (!fits() && size > MIN_PX) {
-          size -= 1;
-          el.style.fontSize = size + 'px';
-        }
-      }
-      if (!fits()){
-        el.style.letterSpacing = '-0.04em';
-      }
-      if (!fits()){
-        let scale = 0.98;
-        while (!fits() && scale > 0.85) {
-          el.style.transform = `scale(${scale})`;
-          scale -= 0.02;
-        }
-      }
-    });
-  }
-
-  // ==== カードHTML ====
-  function cardHTML_img(it){
-    const nameEsc = escHtml(it.name||'');
-    const full = it.image||'';
-    const codeEsc = escHtml(it.code||'');
-    let thumb = it.thumb || full;
-    const hasHttp = /^https?:\/\//.test(thumb);
-    if (thumb && !hasHttp && !thumb.startsWith('../')) thumb = '../' + thumb;
-    const codeHtml = codeEsc ? `<span class="code">[${codeEsc}]</span>` : '';
-    return `
-  <article class="card">
-    <div class="th" data-full="${full}">
-      <img alt="${nameEsc}" loading="lazy" decoding="async"
-           width="600" height="800"
-           data-src="${thumb}" src=""
-           onerror="this.onerror=null;var p=this.closest('.th');this.src=p?p.getAttribute('data-full'):this.src;">
-    </div>
-    <div class="b">
-      <h3 class="n"><span class="ttl">${nameEsc}</span>${codeHtml}</h3>
-      <div class="p"><span class="mx">${fmtYen(it.price)}</span></div>
-    </div>
-  </article>`;
-  }
-
-  function cardHTML_list(it){
-    const nameEsc = escHtml(it.name||'');
-    const codeEsc = escHtml(it.code||'');
-    const codeHtml = codeEsc ? `<span class="code">[${codeEsc}]</span>` : '';
-    const meta = [it.code||'', [it.pack||'', it.booster||''].filter(Boolean).join(' / ')].filter(Boolean).join(' ・ ');
-    return `
-  <article class="card">
-    <div class="b">
-      <h3 class="n"><span class="ttl">${nameEsc}</span>${codeHtml}</h3>
-      <div class="meta">${escHtml(meta)}</div>
-      <div class="p"><span class="mx">${fmtYen(it.price)}</span></div>
-    </div>
-  </article>`;
-  }
-
-  let io;
-  function setupIO(){
-    if (io) io.disconnect();
-    io = new IntersectionObserver((entries)=>{
-      entries.forEach(e=>{
-        if (e.isIntersecting){
-          const img = e.target;
-          const ds = img.getAttribute('data-src');
-          if (ds && !img.src){ img.src = ds; img.removeAttribute('data-src'); }
-          io.unobserve(img);
-        }
-      });
-    }, { rootMargin: (isMobileConst || slowNet) ? "300px 0px" : "600px 0px", threshold: 0.01 });
-
-    document.querySelectorAll('#grid img[data-src]').forEach(img=>io.observe(img));
-    document.querySelectorAll('#grid img').forEach((img, i)=>{ img.setAttribute('fetchpriority', i < 8 ? 'high' : 'low'); });
-  }
-
-  function eagerLoad(n){
-    const imgs=[...document.querySelectorAll('#grid img[data-src]')].slice(0,n);
-    imgs.forEach(img=>{ if(!img.src){ img.src = img.getAttribute('data-src'); img.removeAttribute('data-src'); }});
-  }
+  function matchEither(kana,latin,qK,qL){ if(!qK && !qL) return true; let ok=false; if(qK && kana.includes(qK)) ok=true; if(qL && latin.includes(qL)) ok=true; return ok; }
 
   function apply(){
-    const qNameK   = normalizeForSearch(nameQ.value||'');
-    const qCodeK   = normalizeForSearch(codeQ.value||'');
-    const qPackK   = normalizeForSearch(packQ.value||'');
-    const qRarityK = normalizeForSearch(rarityQ.value||'');
+    const qNameK=normalizeForSearch(nameQ.value||''), qCodeK=normalizeForSearch(codeQ.value||''), qPackK=normalizeForSearch(packQ.value||''), qRarityK=normalizeForSearch(rarityQ.value||'');
+    const qNameL=normalizeLatin(nameQ.value||''), qCodeL=normalizeLatin(codeQ.value||''), qPackL=normalizeLatin(packQ.value||''), qRarityL=normalizeLatin(rarityQ.value||'');
 
-    const qNameL   = normalizeLatin(nameQ.value||'');
-    const qCodeL   = normalizeLatin(codeQ.value||'');
-    const qPackL   = normalizeLatin(packQ.value||'');
-    const qRarityL = normalizeLatin(rarityQ.value||'');
-
-    const matchEither = (kana, latin, qK, qL) => {
-      if (!qK && !qL) return true;
-      let ok = false;
-      if (qK && kana.includes(qK)) ok = true;
-      if (qL && latin.includes(qL)) ok = true;
-      return ok;
-    };
-
-    VIEW = ALL.filter(it =>
-      matchEither(it._name,        it._name_lat,        qNameK,   qNameL)   &&
-      matchEither(it._code,        it._code_lat,        qCodeK,   qCodeL)   &&
-      matchEither(it._packbooster, it._packbooster_lat, qPackK,   qPackL)   &&
+    VIEW=ALL.filter(it =>
+      matchEither(it._name,        it._name_lat,        qNameK, qNameL) &&
+      matchEither(it._code,        it._code_lat,        qCodeK, qCodeL) &&
+      matchEither(it._packbooster, it._packbooster_lat, qPackK, qPackL) &&
       matchEither(it._rarity,      it._rarity_lat,      qRarityK, qRarityL)
     );
-
     if(currentSort==='desc') VIEW.sort((a,b)=>(b.price||0)-(a.price||0));
-    else if(currentSort==='asc') VIEW.sort((a,b)=>(a.price||0)-(b.price||0));
+    else if(currentSort==='asc') VIEW.sort((a,b)=> (a.price||0)-(b.price||0));
 
     page=1; render();
   }
 
-  function buildPageButtons(cur, total){
-    const around = matchMedia('(max-width: 700px)').matches ? 2 : 3;
-    const btns = [];
-    btns.push({type:'num', page:1});
-
-    const start = Math.max(2, cur - around);
-    const end   = Math.min(total - 1, cur + around);
-
-    if (start > 2) btns.push({type:'ellipsis'});
-    for (let p = start; p <= end; p++){
-      if (p >= 2 && p <= total-1) btns.push({type:'num', page:p});
-    }
-    if (end < total - 1) btns.push({type:'ellipsis'});
-
-    if (total > 1) btns.push({type:'num', page:total});
-    return btns;
+  function buildPageButtons(cur,total){
+    const around=matchMedia('(max-width: 700px)').matches?2:3, btns=[]; btns.push({type:'num',page:1});
+    const start=Math.max(2,cur-around), end=Math.min(total-1,cur+around);
+    if(start>2) btns.push({type:'ellipsis'}); for(let p=start;p<=end;p++){ if(p>=2 && p<=total-1) btns.push({type:'num',page:p}); }
+    if(end<total-1) btns.push({type:'ellipsis'}); if(total>1) btns.push({type:'num',page:total}); return btns;
   }
-
-  function renderPager(cur, total, isMobile){
-    const first = (cur>1)  ? `<a href="#" data-jump="first" class="first">≪ 最初のページ</a>` : `<a class="disabled">≪ 最初のページ</a>`;
-    const prev  = (cur>1)  ? `<a href="#" data-jump="prev"  class="prev">← 前のページ</a>`   : `<a class="disabled">← 前のページ</a>`;
-    const next  = (cur<total) ? `<a href="#" data-jump="next"  class="next">次のページ →</a>` : `<a class="disabled">次のページ →</a>`;
-    const last  = (cur<total) ? `<a href="#" data-jump="last"  class="last">最後のページ ≫</a>` : `<a class="disabled">最後のページ ≫</a>`;
-
-    const nums = buildPageButtons(cur, total).map(item=>{
-      if (item.type==='ellipsis') return `<span class="ellipsis">…</span>`;
-      const p=item.page;
-      return (p===cur)
-        ? `<button class="num" aria-current="page" aria-label="現在のページ ${p}" disabled>${p}</button>`
-        : `<a class="num" href="#" data-page="${p}" aria-label="ページ ${p}">${p}</a>`;
-    }).join(' ');
-
-    const mobileRow = isMobile ? `<div class="controls-mobile">${first} ${prev} ${next} ${last}</div>` : '';
-
-    return `
-      <div class="pager">
-        <div class="left">${first} ${prev}</div>
-        <div class="center">${nums}</div>
-        <div class="right">${next} ${last}</div>
-        ${mobileRow}
-      </div>
-    `;
+  function renderPager(cur,total,isMobile){
+    const first=(cur>1)?`<a href="#" data-jump="first">≪ 最初のページ</a>`:`<a class="disabled">≪ 最初のページ</a>`;
+    const prev =(cur>1)?`<a href="#" data-jump="prev">← 前のページ</a>`:`<a class="disabled">← 前のページ</a>`;
+    const next =(cur<total)?`<a href="#" data-jump="next">次のページ →</a>`:`<a class="disabled">次のページ →</a>`;
+    const last =(cur<total)?`<a href="#" data-jump="last">最後のページ ≫</a>`:`<a class="disabled">最後のページ ≫</a>`;
+    const nums=buildPageButtons(cur,total).map(item=> item.type==='ellipsis' ? `<span class="ellipsis">…</span>` : ((item.page===cur)?`<button class="num" aria-current="page" disabled>${item.page}</button>`:`<a class="num" href="#" data-page="${item.page}">${item.page}</a>`)).join(' ');
+    const mobileRow=isMobile?`<div class="controls-mobile">${first} ${prev} ${next} ${last}</div>`:'';
+    return `<div class="pager"><div class="left">${first} ${prev}</div><div class="center">${nums}</div><div class="right">${next} ${last}</div>${mobileRow}</div>`;
   }
-
-  function scrollTopSmooth(){ window.scrollTo({ top: 0, behavior: 'smooth' }); }
+  function scrollTopSmooth(){ window.scrollTo({top:0, behavior:'smooth'}); }
 
   function render(){
     grid.className = showImages ? 'grid grid-img' : 'grid grid-list';
+    const total=VIEW.length, pages=Math.max(1, Math.ceil(total/PER_PAGE_ADJ)); if(page>pages) page=pages;
+    const start=(page-1)*PER_PAGE_ADJ, rows=VIEW.slice(start, start+PER_PAGE_ADJ);
 
-    const total=VIEW.length;
-    const pages=Math.max(1, Math.ceil(total/PER_PAGE_ADJ));
-    if(page>pages) page=pages;
-    const start=(page-1)*PER_PAGE_ADJ;
-    const rows=VIEW.slice(start, start+PER_PAGE_ADJ);
+    grid.innerHTML = rows.map(it => {
+      const nameEsc=escHtml(it.name||''), codeEsc=escHtml(it.code||'');
+      const codeHtml = codeEsc ? `<span class="code">[${codeEsc}]</span>` : '';
+      // --- showImages === true のテンプレート ---
+if (showImages){
+  let thumb=it.thumb||it.image||'';
+  const hasHttp=/^https?:\/\//.test(thumb);
+  if(thumb && !hasHttp && !thumb.startsWith('../')) thumb='../'+thumb;
+  return `
+<article class="card">
+  <div class="th" data-full="${it.image||''}">
+    <img alt="${nameEsc}" loading="lazy" decoding="async" width="600" height="800" data-src="${thumb}" src=""
+         onerror="this.onerror=null;var p=this.closest('.th');this.src=p?p.getAttribute('data-full'):this.src;">
+  </div>
+  <div class="b">
+    <h3 class="n"><span class="ttl">${nameEsc}</span>${codeHtml}</h3>
+    <div class="p"><span class="mx">${fmtYen(it.price)}</span></div>
+    <div class="actrow">
+      <button class="btn mini btn-add" data-name="${nameEsc}" data-model="${codeEsc}" data-price="${it.price||0}">買取カートへ</button>
+    </div>
+  </div>
+</article>`;
+} else {
+// --- showImages === false のテンプレート ---
+  const meta=[it.code||'', [it.pack||'',it.booster||''].filter(Boolean).join(' / ')].filter(Boolean).join(' ・ ');
+  return `
+<article class="card">
+  <div class="b">
+    <h3 class="n"><span class="ttl">${nameEsc}</span>${codeHtml}</h3>
+    <div class="meta">${escHtml(meta)}</div>
+    <div class="p"><span class="mx">${fmtYen(it.price)}</span></div>
+    <div class="actrow">
+      <button class="btn mini btn-add" data-name="${nameEsc}" data-model="${codeEsc}" data-price="${it.price||0}">買取カートへ</button>
+    </div>
+  </div>
+</article>`;
+}
 
-    grid.innerHTML = rows.map(showImages ? cardHTML_img : cardHTML_list).join('');
+    }).join('');
 
     if(showImages){
       grid.querySelectorAll('.th').forEach(th=>{
-        th.addEventListener('click', ()=>{
-          const src = th.getAttribute('data-full') || th.querySelector('img')?.src || '';
-          if(!src) return;
-          viewerImg.src = src;
-          viewer.classList.add('show');
-          document.body.classList.add('modal-open');
-        });
+        th.addEventListener('click', ()=>{ const src=th.getAttribute('data-full') || th.querySelector('img')?.src || ''; if(!src) return; viewerImg.src=src; viewer.classList.add('show'); document.body.classList.add('modal-open'); });
       });
     }
+    grid.querySelectorAll('.btn-add').forEach(btn=>{
+      btn.addEventListener('click', ()=>{ addToCart({name:btn.dataset.name, code:btn.dataset.model, price:Number(btn.dataset.price)||0}); });
+    });
 
     const isMobileNow = window.matchMedia('(max-width: 700px)').matches;
-    const pagerHtml = renderPager(page, pages, isMobileNow);
+    const pagerHtml=renderPager(page,pages,isMobileNow);
     navs.forEach(n=>{
-      n.innerHTML = pagerHtml;
-      n.onclick = (e)=>{
-        const a = e.target.closest('a,button');
-        if (!a) return;
-        if (a.matches('.disabled,[disabled]')) return;
-        e.preventDefault();
-
-        if (a.dataset.jump === 'first') { page = 1;      render(); scrollTopSmooth(); return; }
-        if (a.dataset.jump === 'prev')  { page = Math.max(1, page-1); render(); scrollTopSmooth(); return; }
-        if (a.dataset.jump === 'next')  { page = Math.min(pages, page+1); render(); scrollTopSmooth(); return; }
-        if (a.dataset.jump === 'last')  { page = pages;  render(); scrollTopSmooth(); return; }
-
-        const p = parseInt(a.dataset.page || '0', 10);
-        if (p && p !== page){ page = p; render(); scrollTopSmooth(); }
+      n.innerHTML=pagerHtml; n.onclick=(e)=>{
+        const a=e.target.closest('a,button'); if(!a || a.matches('.disabled,[disabled]')) return; e.preventDefault();
+        if(a.dataset.jump==='first'){ page=1; render(); scrollTopSmooth(); return; }
+        if(a.dataset.jump==='prev'){ page=Math.max(1,page-1); render(); scrollTopSmooth(); return; }
+        if(a.dataset.jump==='next'){ page=Math.min(pages,page+1); render(); scrollTopSmooth(); return; }
+        if(a.dataset.jump==='last'){ page=pages; render(); scrollTopSmooth(); return; }
+        const p=parseInt(a.dataset.page||'0',10); if(p && p!==page){ page=p; render(); scrollTopSmooth(); }
       };
     });
 
-    shrinkPrices(grid);
-    if (showImages) {
-      setupIO();
-      eagerLoad(eager1);
-      setTimeout(()=>eagerLoad(eager2), 600);
+    // 画像lazy
+    if(showImages){
+      const io=new IntersectionObserver((entries)=>{
+        entries.forEach(e=>{
+          if(e.isIntersecting){
+            const img=e.target; const ds=img.getAttribute('data-src');
+            if(ds && !img.src){ img.src=ds; img.removeAttribute('data-src'); }
+            io.unobserve(img);
+          }
+        });
+      }, { rootMargin:(isMobileConst||slowNet)?"300px 0px":"600px 0px", threshold:0.01 });
+      document.querySelectorAll('#grid img[data-src]').forEach(img=>io.observe(img));
     }
   }
 
@@ -895,45 +758,67 @@ base_js = r"""
     btnDesc?.setAttribute('aria-pressed', currentSort==='desc' ? 'true':'false');
     btnAsc ?.setAttribute('aria-pressed', currentSort==='asc'  ? 'true':'false');
     btnNone?.setAttribute('aria-pressed', currentSort===null    ? 'true':'false');
-    btnDesc?.classList.toggle('active', currentSort==='desc');
-    btnAsc ?.classList.toggle('active', currentSort==='asc');
-    btnNone?.classList.toggle('active', currentSort===null);
-  }
-  function setImgBtn(){
-    if (!btnImg) return;
-    btnImg.textContent = showImages ? '画像OFF' : '画像ON';
-    btnImg.classList.toggle('active', showImages);
-    btnImg.setAttribute('aria-pressed', showImages ? 'true' : 'false');
-  }
-  function toggleImages(e){
-    if (e) { e.preventDefault(); e.stopPropagation(); }
-    showImages = !showImages;
-    localStorage.setItem('showImages', showImages ? '1' : '0');
-    setImgBtn();
-    render();
+    btnDesc?.classList.toggle('active', currentSort==='desc'); btnAsc?.classList.toggle('active', currentSort==='asc'); btnNone?.classList.toggle('active', currentSort===null);
   }
 
-  btnDesc?.addEventListener('click', ()=>{ currentSort = (currentSort==='desc') ? null : 'desc'; setActiveSort(); apply(); });
-  btnAsc ?.addEventListener('click', ()=>{ currentSort = (currentSort==='asc') ? null : 'asc'; setActiveSort(); apply(); });
-  btnNone?.addEventListener('click', ()=>{ currentSort = null; setActiveSort(); apply(); });
-  btnImg ?.addEventListener('click', toggleImages);
-
-  const DEBOUNCE = (isMobileConst || slowNet || cores <= 4) ? 240 : 120;
-  function onInputDebounced(el){ el.addEventListener('input', ()=>{ clearTimeout(el._t); el._t=setTimeout(apply,DEBOUNCE); }); }
-  [nameQ, codeQ, packQ, rarityQ].forEach(onInputDebounced);
-
-  function closeViewer(){
-    viewer.classList.remove('show');
-    viewerImg.src='';
-    document.body.classList.remove('modal-open');
-  }
+  function closeViewer(){ viewer.classList.remove('show'); viewerImg.src=''; document.body.classList.remove('modal-open'); }
   viewerClose?.addEventListener('click', closeViewer);
   viewer?.addEventListener('click', (e)=>{ if(e.target===viewer) closeViewer(); });
   window.addEventListener('keydown', (e)=>{ if(e.key==='Escape') closeViewer(); });
 
-  window.addEventListener('resize', () => shrinkPrices(document));
+  // LIFF SDK（CDN・一発追加）
+  (function addLiff(){ if(document.querySelector('script[data-liff]')) return;
+    const s=document.createElement('script'); s.src='https://static.line-scdn.net/liff/edge/2/sdk.js'; s.async=true; s.setAttribute('data-liff','1'); document.head.appendChild(s);
+  })();
 
-  setActiveSort(); setImgBtn(); apply();
+  // LINE送信：LIFF内→sendMessages / それ以外→oaMessage ディープリンク
+  function openOAMessage(text){
+    const enc=encodeURIComponent(text);
+    const app=`line://oaMessage/${OA_ID}/?${enc}`;
+    const web=`https://line.me/R/oaMessage/${OA_ID}/?${enc}`;
+    location.href = app; setTimeout(()=>window.open(web,"_blank"), 500);
+  }
+  async function trySendViaLIFF(text){
+    if(!window.liff) return false;
+    try{
+      if(!liff._climaxInited){ await liff.init({ liffId: LIFF_ID }); liff._climaxInited=true; }
+      if(!liff.isLoggedIn()){ liff.login(); return false; }
+      if(!liff.isInClient()) return false;
+      await liff.sendMessages([{ type:'text', text }]);
+      alert('LINEに仮査定リストを送信しました。'); liff.closeWindow?.(); return true;
+    }catch(e){ return false; }
+  }
+
+  function buildCartText(){
+    const lines=[]; let total=0;
+    for(const it of cart){ const q=+it.qty||1, p=+it.price||0; total+=q*p; lines.push(`・${it.name}${it.model?`［${it.model}］`:''} ×${q}${p?` @${p.toLocaleString()}円`:''}`); }
+    let body=`【仮査定依頼】\n`+lines.join("\n"); body+=`\n――――\n合計：${total.toLocaleString()}円\n※仮査定です。現物確認後に正式査定となります。`;
+    if(body.length>900) body=body.slice(0,880)+"\n…（続き省略）";
+    return body;
+  }
+
+  cartSend?.addEventListener('click', async ()=>{
+    if(!cart.length){ alert('カートが空です。'); return; }
+    const text=buildCartText();
+    if(await trySendViaLIFF(text)) return;
+    openOAMessage(text);
+  });
+
+  // 入力遅延
+  const DEBOUNCE = (isMobileConst||slowNet||cores<=4)?240:120;
+  function onInputDebounced(el){ el.addEventListener('input', ()=>{ clearTimeout(el._t); el._t=setTimeout(apply,DEBOUNCE); }); }
+  [nameQ,codeQ,packQ,rarityQ].forEach(onInputDebounced);
+
+  // sort/画像ボタン
+  function initButtons(){
+    btnDesc?.addEventListener('click', ()=>{ currentSort=(currentSort==='desc')?null:'desc'; setActiveSort(); apply(); });
+    btnAsc ?.addEventListener('click', ()=>{ currentSort=(currentSort==='asc') ?null:'asc' ; setActiveSort(); apply(); });
+    btnNone?.addEventListener('click', ()=>{ currentSort=null; setActiveSort(); apply(); });
+    btnImg ?.addEventListener('click', toggleImages);
+    setImgBtn();
+  }
+
+  setActiveSort(); initButtons(); loadCart(); apply();
 })();
 """
 
@@ -945,7 +830,11 @@ def html_page(title: str, js_source: str, logo_uri: str, cards_json: str) -> str
     parts = []
     parts.append("<!doctype html><html lang='ja'><head><meta charset='utf-8'>")
     parts.append("<meta name='viewport' content='width=device-width,initial-scale=1'>")
-    parts.append("<style>"); parts.append(base_css); parts.append("</style></head><body>")
+    parts.append("<style>"); parts.append(base_css); parts.append("</style>")
+    # LIFF SDK（CDN読込）
+    parts.append("<script src='https://static.line-scdn.net/liff/edge/2/sdk.js' data-liff></script>")
+    parts.append("</head><body>")
+
     parts.append("<header><div class='header-wrap'>")
     parts.append("<div class='brand-left'>")
     if logo_uri:
@@ -958,12 +847,14 @@ def html_page(title: str, js_source: str, logo_uri: str, cards_json: str) -> str
     parts.append("<div class='actions'>")
     parts.append(f"<a class='iconbtn' href='https://www.climax-card.jp/' target='_blank' rel='noopener'>{shop_svg}<span>Shop</span></a>")
     parts.append(f"<a class='iconbtn' href='https://www.climax-card.jp/member-login' target='_blank' rel='noopener'>{login_svg}<span>Login</span></a>")
-    # 追加：X / LINE アイコン（画像が見つかったときのみ）
     if X_ICON_URI:
         parts.append(f"<a class='iconimg iconimg--x' href='https://x.com/climaxcard' target='_blank' rel='noopener'><img src='{X_ICON_URI}' alt='X'></a>")
     if LINE_ICON_URI:
-        parts.append(f"<a class='iconimg iconimg--line' href='https://line.me/R/ti/p/@512nwjvn' target='_blank' rel='noopener'><img src='{LINE_ICON_URI}' alt='LINE'></a>")
+        parts.append(f"<a class='iconimg iconimg--line' href='https://line.me/R/ti/p/{OA_ID}' target='_blank' rel='noopener'><img src='{LINE_ICON_URI}' alt='LINE'></a>")
+    # ← LINEアイコンの“右側”にカート（唯一の🛒）
+    parts.append("<button id='fabCart' class='iconbtn iconbtn--cart' type='button'>🛒 <span id='fabBadge' class='badge'>0</span></button>")
     parts.append("</div></div></header>")
+
     parts.append("<main class='wrap'>")
     parts.append("<div class='controls'>")
     parts.append("  <input id='nameQ'   class='search' placeholder='名前：部分一致（ひらがな可）'>")
@@ -977,17 +868,38 @@ def html_page(title: str, js_source: str, logo_uri: str, cards_json: str) -> str
     parts.append("    <button id='btnToggleImages' class='btn' type='button'>画像ON</button>")
     parts.append("  </div></div>")
     parts.append("  <nav class='simple'></nav><div id='grid' class='grid grid-img'></div><nav class='simple'></nav>")
-    parts.append("  <small class='note'>このページ内のデータのみで検索・並び替え・ページングできます。画像クリックで拡大表示。</small>")
+    parts.append("  <small class='note'>画像クリックで拡大。🛒カートから「LINEに送る」でCLIMAX公式LINEへ送信できます（アプリ外でもOK）。</small>")
     parts.append("</main>")
 
-    parts.append("<script>")
-    parts.append("window.__CARDS__=" + cards_json + ";")
-    parts.append("</script>")
-
+    # 画像ビューワ
     parts.append("<div id='viewer' class='viewer'><div class='vc'><img id='viewerImg' alt=''><button id='viewerClose' class='close'>×</button></div></div>")
-    parts.append("<script>")
-    parts.append(js_source)
-    parts.append("</script></body></html>")
+
+    # データ
+    parts.append("<script>window.__CARDS__=" + cards_json + ";</script>")
+
+    # カートモーダル
+    parts.append("""
+<div id="cartModal" class="cart-modal">
+  <div class="cart-sheet" role="dialog" aria-modal="true" aria-label="仮査定カート">
+    <div class="cart-head">
+      <strong>仮査定カート</strong>
+      <button id="cartClose" class="btn">閉じる</button>
+    </div>
+    <div id="cartList" class="cart-list"></div>
+    <div class="cart-foot">
+      <div id="cartTotal">合計：0円</div>
+      <div class="cart-act">
+        <button id="cartClear" class="btn" style="border-color:#fecaca;color:#b91c1c;">カートを空にする</button>
+        <button id="cartSend" class="btn" style="background:#06C755;color:#fff;border-color:#06C755;">LINEに送る</button>
+      </div>
+    </div>
+  </div>
+</div>
+""")
+
+    # JS本体
+    parts.append("<script>"); parts.append(js_source); parts.append("</script>")
+    parts.append("</body></html>")
     return "".join(parts)
 
 # ========= 出力 =========
@@ -996,7 +908,12 @@ OUT_DIR.mkdir(parents=True, exist_ok=True)
 def write_mode(dir_name: str, initial_sort_js_literal: str, title_text: str):
     sub = OUT_DIR / dir_name
     sub.mkdir(parents=True, exist_ok=True)
-    js = base_js.replace("__PER_PAGE__", str(PER_PAGE)).replace("__INITIAL_SORT__", initial_sort_js_literal)
+    js = (base_js
+          .replace("__PER_PAGE__", str(PER_PAGE))
+          .replace("__INITIAL_SORT__", initial_sort_js_literal)
+          .replace("__LIFF_ID__", LIFF_ID)
+          .replace("__OA_ID__", OA_ID)
+          )
     html = html_page(title_text, js, LOGO_URI, CARDS_JSON)
     (sub / "index.html").write_text(html, encoding="utf-8")
 
