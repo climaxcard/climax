@@ -205,7 +205,7 @@ def kata_to_hira(text: str) -> str:
 
 def normalize_for_search_py(s: str) -> str:
     s0 = nfkc_lower(s)
-    s0 = s0.replace("complex", "こんぷれっくす").replace("c0br4", "こぶら").replace("伝説", "でんせつ")
+    s0 = s0.replace("complex", "こんぷれっくす").replace("c0br4", "こぶら").replace("伝説", "でんせつ").replace("魔弾の名", "えぴたふ")
     s0 = kata_to_hira(s0)
     s0 = SEP_RE.sub("", s0)
     return s0
