@@ -536,7 +536,7 @@ base_js = r"""
 
   const SEP_RE = /[\s\u30FB\u00B7·/／\-_—–−]+/g;
   function kataToHira(str){ return (str||'').replace(/[\u30A1-\u30FA]/g, ch => String.fromCharCode(ch.charCodeAt(0)-0x60)); }
-  const kanjiReadingMap = { "伝説":"でんせつ","魔弾の名":"えぴたふ"};
+  const kanjiReadingMap = { "伝説":"でんせつ","魔弾の名":"えぴたふ","西方":"びすまるく"};
   const latinAliasMap = { "complex": "こんぷれっくす", "c0br4": "こぶら" };
 
   function normalizeForSearch(s){
