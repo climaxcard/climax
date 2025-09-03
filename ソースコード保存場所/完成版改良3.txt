@@ -1,0 +1,206 @@
+# -*- coding: utf-8 -*-
+"""
+デュエマ買取表 静的ページ生成（白レイアウト・横4列・完全オフライン）
+- 見出し無しExcelでもOK（内容解析で列自動推定）
+  * 名前: 日本語文字率が高くURLでない列
+  * 画像: cardimage/.jpg/.png 等のURLが多い列
+  * 価格: 数値密度が高く、0<値<1e7 が多い列
+- ページ分割（50件/頁）
+"""
+
+from pathlib import Path
+import pandas as pd
+import numpy as np
+import html as html_mod
+import unicodedata as ud
+import math
+import re
+import sys
+
+# ========= 設定 =========
+EXCEL_PATH = os.getenv("EXCEL_PATH", r"data/買取読み込みファイル.xlsx")  # ← ここだけ変更
+SHEET_NAME = "シート1"
+OUT_DIR    = Path(os.getenv("OUT_DIR", "docs"))                             # ← ここだけ変更
+PER_PAGE   = 80
+TITLE      = "デュエマ買取表"
+BG_COLOR   = "#ffffff"
+
+# 任意: 列番号(0始まり)の手動指定がある場合はここに入れると最優先
+NAME_COL_IDX  = None   # 例: 1
+IMG_COL_IDX   = None   # 例: 8
+PRICE_COL_IDX = None   # 例: 7
+
+# ===== ユーティリティ =====
+def normalize_text(s):
+    if pd.isna(s): return ""
+    return ud.normalize("NFKC", str(s)).strip()
+
+def is_url(x:str) -> bool:
+    x = str(x)
+    return x.startswith("http://") or x.startswith("https://")
+
+def jp_ratio(s:str) -> float:
+    # 日本語っぽさをざっくり評価（ひらがな/カタカナ/漢字の比率）
+    s = normalize_text(s)
+    if not s: return 0.0
+    total = len(s)
+    jp = sum(1 for ch in s if ('ぁ' <= ch <= 'ん') or ('ァ' <= ch <= 'ヶ') or ('一' <= ch <= '龥'))
+    return jp/total
+
+def pick_price_col(df):
+    best, score = None, -1
+    for c in df.columns:
+        s = pd.to_numeric(df[c], errors="coerce")
+        total = len(s)
+        if total == 0: continue
+        valid = s.notna().sum()
+        range_ok = ((s>0) & (s<10_000_000)).sum()
+        sc = (valid/total) + 0.5*(range_ok/total)
+        if sc > score:
+            best, score = c, sc
+    return best
+
+def pick_img_col(df):
+    pat = re.compile(r'(cardimage|\.jpg|\.png|\.jpeg)', re.IGNORECASE)
+    best, score = None, -1
+    for c in df.columns:
+        col = df[c].astype(str)
+        url_cnt = ((col.str.startswith("http://")) | (col.str.startswith("https://"))).sum()
+        hit_cnt = col.str.contains(pat, na=False).sum()
+        sc = url_cnt + 2*hit_cnt  # 画像っぽい文字列は重み高め
+        if sc > score:
+            best, score = c, sc
+    return best
+
+def pick_name_col(df, exclude_cols):
+    best, score = None, -1
+    for c in df.columns:
+        if c in exclude_cols: continue
+        col = df[c].astype(str)
+        # URLや数値ばかりは除外傾向
+        url_ratio = col.str.startswith(("http://","https://")).mean()
+        num_ratio = pd.to_numeric(col, errors="coerce").notna().mean()
+        # 日本語率平均
+        jp_avg = col.head(500).map(jp_ratio).mean()  # 上位500行で十分
+        sc = jp_avg - 0.6*url_ratio - 0.2*num_ratio
+        if sc > score:
+            best, score = c, sc
+    return best
+
+def make_html_page(cards, page_num, total_pages, total_cards):
+    card_html = ""
+    for _, row in cards.iterrows():
+        name = html_mod.escape(str(row["name"]))
+        img  = normalize_text(row.get("img",""))
+        price_val = row.get("price", 0)
+        try:
+            price = int(float(price_val)) if pd.notna(price_val) else 0
+        except:
+            price = 0
+        img_tag = f"<img src='{html_mod.escape(img)}' alt='{name}'>" if img else ""
+        card_html += f"""
+        <div class='card'>
+            <div class='img'>{img_tag}</div>
+            <div class='name'>{name}</div>
+            <div class='price'>{price}円</div>
+        </div>
+        """
+
+    pager = " ".join(
+        f"<strong>{i}</strong>" if i == page_num else f"<a href='p{i}.html'>{i}</a>"
+        for i in range(1, total_pages+1)
+    )
+
+    return f"""<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>{TITLE} - ページ{page_num}</title>
+<style>
+* {{ box-sizing: border-box; }}
+body {{
+  font-family: -apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Kaku Gothic ProN","Yu Gothic",Meiryo,sans-serif;
+  background:{BG_COLOR}; color:#000; margin:0;
+}}
+header {{
+  position: sticky; top: 0; background:#f5f5f5; padding:10px 14px;
+  border-bottom:1px solid #ddd; font-weight:600;
+}}
+.cards {{
+  display:grid; grid-template-columns:repeat(4, 1fr);
+  gap:10px; padding:10px;
+}}
+.card {{ border:1px solid #ddd; background:#fff; padding:8px; text-align:center; border-radius:10px; }}
+.card img {{ width:100%; height:auto; display:block; border-radius:6px; }}
+.name {{ font-size:.92rem; margin-top:6px; line-height:1.3; }}
+.price {{ font-size:1rem; font-weight:700; color:#d00; margin-top:4px; }}
+.pager {{ text-align:center; padding:16px; }}
+.pager a {{ text-decoration:none; padding:2px 6px; }}
+@media (max-width: 640px) {{
+  .cards {{ grid-template-columns:repeat(4, 1fr); gap:6px; }}
+  .name {{ font-size:.8rem; }}
+  .price {{ font-size:.9rem; }}
+}}
+</style>
+</head>
+<body>
+<header>{TITLE}（全{total_cards}件） / ページ {page_num} / {total_pages}</header>
+<div class="cards">
+{card_html}
+</div>
+<div class="pager">{pager}</div>
+</body>
+</html>
+"""
+
+# ===== メイン =====
+if not EXCEL_PATH.exists():
+    raise FileNotFoundError(f"Excelが見つかりません: {EXCEL_PATH.resolve()}")
+
+# 見出し無しとして読む（header=None）
+df = pd.read_excel(EXCEL_PATH, engine="openpyxl", header=None)
+
+# 手動オーバーライドあれば優先（列番号→列名に変換）
+name_col  = df.columns[NAME_COL_IDX]  if NAME_COL_IDX  is not None else None
+img_col   = df.columns[IMG_COL_IDX]   if IMG_COL_IDX   is not None else None
+price_col = df.columns[PRICE_COL_IDX] if PRICE_COL_IDX is not None else None
+
+# 画像と価格を先に推定
+if img_col   is None: img_col   = pick_img_col(df)
+if price_col is None: price_col = pick_price_col(df)
+# 名前は残りから推定
+exclude = set([img_col, price_col])
+if name_col is None: name_col = pick_name_col(df, exclude)
+
+# 検証
+missing = []
+if name_col  is None: missing.append("name（カード名）")
+if price_col is None: missing.append("price（買取価格）")
+if missing:
+    print("自動推定に失敗しました。候補列を教えてください。")
+    print("先頭2行のプレビュー：")
+    print(df.head(2))
+    sys.exit(1)
+
+print(f"[map] name=col{df.columns.get_loc(name_col)} / img=col{df.columns.get_loc(img_col) if img_col is not None else 'None'} / price=col{df.columns.get_loc(price_col)}")
+
+# 正規化して標準化
+name_series  = df[name_col].map(normalize_text)
+img_series   = df[img_col].map(normalize_text) if img_col is not None else ""
+price_series = pd.to_numeric(df[price_col], errors="coerce").fillna(0).astype(int)
+
+df_std = pd.DataFrame({"name": name_series, "img": img_series, "price": price_series})
+
+# 明らかに空行を除外
+df_std = df_std[(df_std["name"]!="") | (df_std["price"]>0) | (df_std["img"]!="")].reset_index(drop=True)
+
+total_cards = len(df_std)
+total_pages = max(1, math.ceil(total_cards / PER_PAGE))
+
+OUT_DIR.mkdir(parents=True, exist_ok=True)
+for i in range(total_pages):
+    chunk = df_std.iloc[i*PER_PAGE:(i+1)*PER_PAGE]
+    html = make_html_page(chunk, i+1, total_pages, total_cards)
+    (OUT_DIR / f"p{i+1}.html").write_text(html, encoding="utf-8")
+
+print(f"[OK] 生成完了 → {OUT_DIR.resolve()} / {total_cards}件 / {PER_PAGE}件/頁")

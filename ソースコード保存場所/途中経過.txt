@@ -1,0 +1,415 @@
+# -*- coding: utf-8 -*-
+"""
+完成版（HTTPS運用推奨・file://でもOK）
+- 白背景/黒文字、価格は赤。価格はカード左下に固定＋長い時は自動縮小
+- Stickyトップバー：左にロゴ（Data URL埋め込み）、中央に「デュエマ買取表」、右に Shop / Login
+- 検索：名前 / 型番（例: SP4/SP5, 19/100） / 弾（例: DMEX-01, 邪神VS邪神） / レアリティ
+- ソート：高い順 / 低い順 / 標準順（トグルで復帰）
+- 画像ON=4列 / 画像OFF=2列（均等配置・センタリング）
+- 画像拡大：画像ONは画像orカード名、画像OFFはカード名をクリックでライトボックス
+  * onclick直書き + grid委譲 + document capture の三段ガード
+  * CORSでブロックされないよう crossOrigin は付けない（referrerpolicyは付与）
+- 完全オフライン：各ページに全件JSON同梱（fetch不要）
+"""
+
+from pathlib import Path
+from urllib.parse import urlparse, parse_qs
+import pandas as pd, unicodedata as ud, html as html_mod, math, base64
+
+# ========= 設定 =========
+EXCEL_PATH = r"C:\Users\user\Downloads\WEB買取表_I列_画像URL_cardimage.xlsx"
+SHEET_NAME = "シート1"
+PER_PAGE   = 50
+OUT_DIR    = Path("buylist_pages_offline")
+LOGO_PATH  = Path(r"C:\Users\user\Pictures\climax_logo.png")  # ロゴ画像（任意。見つかれば埋め込み）
+
+# 列番号（0始まり）
+COL_NAME=1; COL_PACK=2; COL_CODE=3; COL_RARITY=4; COL_BOOST=5; COL_PRICE=7; COL_IMGURL=8
+
+# ========= 入力 =========
+try:
+    df_raw = pd.read_excel(EXCEL_PATH, sheet_name=SHEET_NAME, header=None, engine="openpyxl")
+except Exception:
+    xls = pd.ExcelFile(EXCEL_PATH, engine="openpyxl")
+    df_raw = pd.read_excel(xls, sheet_name=xls.sheet_names[0], header=None, engine="openpyxl")
+
+# ========= ユーティリティ =========
+def clean_text(s: pd.Series) -> pd.Series:
+    s = s.astype(str)
+    s = s.str.replace(r'(?i)^\s*nan\s*$', '', regex=True)
+    s = s.replace({"nan":"","NaN":"","None":"","NONE":"","null":"","NULL":"","nil":"","NIL":""})
+    return s.fillna("").str.strip()
+
+def to_int_series(s: pd.Series) -> pd.Series:
+    if pd.api.types.is_numeric_dtype(s):
+        return pd.to_numeric(s, errors="coerce").round().astype("Int64")
+    s = s.astype(str).str.replace(r"[^\d\.\-,]", "", regex=True).str.replace(",", "", regex=False)
+    return pd.to_numeric(s, errors="coerce").round().astype("Int64")
+
+def detail_to_img(url: str) -> str:
+    if not isinstance(url, str) or not url: return ""
+    if "cardimage" in url: return url
+    if "id=" in url:
+        parsed = urlparse(url); qs = parse_qs(parsed.query)
+        id_val = qs.get("id", [parsed.path.split("/")[-1]])[0]
+        return f"https://dm.takaratomy.co.jp/wp-content/card/cardimage/{id_val}.jpg"
+    return url if url.startswith("http") else ""
+
+def nfkc_lower(s: str) -> str: return ud.normalize("NFKC", s or "").lower()
+def kata_to_hira(t: str) -> str: return "".join(chr(ord(c)-0x60) if "ァ"<=c<="ン" else c for c in t)
+def searchable_row(row: pd.Series) -> str:
+    return " ".join(kata_to_hira(nfkc_lower(str(row.get(k,"")))) for k in ("name","code","pack","rarity","booster"))
+def esc(x): import pandas as _pd; return html_mod.escape("" if _pd.isna(x) else str(x))
+
+def logo_data_url() -> str:
+    if LOGO_PATH and LOGO_PATH.exists():
+        ext = LOGO_PATH.suffix.lower().lstrip(".") or "png"
+        mime = "image/png" if ext in ("png","apng") else ("image/jpeg" if ext in ("jpg","jpeg") else "image/svg+xml")
+        return f"data:{mime};base64,{base64.b64encode(LOGO_PATH.read_bytes()).decode('ascii')}"
+    return ""
+
+# ========= データ =========
+df = pd.DataFrame({
+    "name":    clean_text(df_raw.iloc[:, COL_NAME] if COL_NAME  < df_raw.shape[1] else ""),
+    "pack":    clean_text(df_raw.iloc[:, COL_PACK] if COL_PACK  < df_raw.shape[1] else ""),
+    "code":    clean_text(df_raw.iloc[:, COL_CODE] if COL_CODE  < df_raw.shape[1] else ""),
+    "rarity":  clean_text(df_raw.iloc[:, COL_RARITY] if COL_RARITY< df_raw.shape[1] else ""),
+    "booster": clean_text(df_raw.iloc[:, COL_BOOST] if COL_BOOST< df_raw.shape[1] else ""),
+    "price":   to_int_series(df_raw.iloc[:, COL_PRICE] if COL_PRICE< df_raw.shape[1] else 0),
+    "image":   clean_text(df_raw.iloc[:, COL_IMGURL] if COL_IMGURL< df_raw.shape[1] else "").map(detail_to_img),
+})
+df = df[~df["name"].str.match(r"^Unnamed", na=False)]
+df = df[df["name"].str.strip()!=""].reset_index(drop=True)
+df["_s"] = df.apply(searchable_row, axis=1)
+
+# ========= CSS =========
+base_css = """
+*{box-sizing:border-box}
+body{margin:0;background:#fff;color:#111;font-family:Inter,system-ui,'Noto Sans JP',sans-serif}
+
+/* Topbar */
+.topbar{position:-webkit-sticky;position:sticky;top:0;z-index:20;background:#ffffffcc;backdrop-filter:blur(6px);border-bottom:1px solid #e5e7eb}
+.topbar .wrap{max-width:1100px;margin:0 auto;padding:8px 12px}
+.topbar-row{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:10px}
+.logo{display:flex;align-items:center;gap:8px}
+.logo img{height:30px;display:block}
+.title{display:flex;justify-content:center}
+.title h1{font-size:18px;margin:0;text-align:center}
+.actions-right{display:flex;gap:8px}
+.iconbtn{display:inline-flex;align-items:center;gap:6px;padding:8px 10px;border-radius:10px;color:#111;background:#f3f4f6;border:1px solid #e5e7eb;text-decoration:none;font-size:13px;line-height:1;cursor:pointer}
+.iconbtn:hover{background:#e5e7eb}
+.iconbtn svg{width:16px;height:16px;display:block}
+
+/* Controls */
+.controls{display:grid;grid-template-columns:repeat(4,minmax(140px,1fr));grid-template-areas:"q1 q2 q3 q4" "acts acts acts acts";gap:8px;align-items:center;margin-top:8px}
+.controls #nameQ{grid-area:q1}.controls #codeQ{grid-area:q2}.controls #packQ{grid-area:q3}.controls #rarityQ{grid-area:q4}
+.controls .btns{grid-area:acts;display:flex;gap:6px;flex-wrap:wrap}
+input.search{background:#fff;border:1px solid #e5e7eb;color:#111;border-radius:10px;padding:10px 12px;font-size:14px;outline:none;min-width:120px}
+.btn{background:#f3f4f6;border:1px solid #e5e7eb;color:#111;border-radius:10px;padding:8px 10px;font-size:13px;cursor:pointer;text-decoration:none;white-space:nowrap}
+.btn:hover{filter:brightness(0.98)} .btn.active{outline:2px solid #ef4444}
+
+/* Layout */
+.wrap{max-width:1100px;margin:0 auto;padding:0 10px}
+.grid{margin:12px 0;width:100%}
+.grid.grid-img{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;align-items:stretch;justify-items:stretch}
+.grid.grid-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;align-items:stretch;justify-items:stretch}
+
+/* Card */
+.card{position:relative;background:#fff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.card:hover{box-shadow:0 4px 10px rgba(0,0,0,.06)}
+.th{aspect-ratio:3/4;background:#f3f4f6;cursor:zoom-in}
+.th img{width:100%;height:100%;object-fit:cover;display:block;background:#f9fafb}
+.b{padding:8px 10px;padding-bottom:38px}
+.n{font-size:13px;font-weight:700;line-height:1.35;margin:0 0 4px;color:#111}
+.open-view{cursor:zoom-in}
+
+/* Price left-bottom */
+.price{position:absolute;left:10px;bottom:8px;background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:4px 8px;pointer-events:none}
+.mx{font-weight:900;color:#ef4444;font-size:clamp(12px,2.8vw,18px);line-height:1.05;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;max-width:100%;font-variant-numeric:tabular-nums}
+
+.meta{font-size:11px;color:#6b7280;word-break:break-word}
+
+/* Mobile */
+@media (max-width:600px){
+  .controls{grid-template-columns:1fr;grid-template-areas:"q1" "q2" "q3" "q4" "acts"}
+  .b{padding:6px;padding-bottom:36px}
+  .n{font-size:11px}
+  .grid.grid-img .mx{font-size:12px}
+  .grid.grid-list .mx{font-size:14px}
+}
+
+/* Pager / Lightbox */
+nav.simple{display:flex;justify-content:center;align-items:center;margin:10px 0;gap:10px;flex-wrap:wrap}
+nav.simple a{color:#111;background:#f3f4f6;border:1px solid #e5e7eb;padding:6px 12px;border-radius:10px;text-decoration:none;white-space:nowrap}
+nav.simple a.disabled{opacity:.5;pointer-events:none}
+nav.simple strong{color:#ef4444;user-select:none}
+small.note{color:#6b7280}
+
+.viewer{position:fixed;inset:0;background:rgba(0,0,0,.86);display:none;align-items:center;justify-content:center;z-index:9999}
+.viewer.show{display:flex}
+.viewer .vc{position:relative;max-width:92vw;max-height:92vh}
+.viewer img{max-width:92vw;max-height:92vh;display:block;background:#000}
+.viewer button.close{position:absolute;top:-12px;right:-12px;background:#111;color:#fff;border:1px solid #444;border-radius:999px;width:36px;height:36px;cursor:pointer}
+"""
+
+# ========= JS =========
+base_js = r"""
+(function(){
+  const nameQ=document.getElementById('nameQ');
+  const codeQ=document.getElementById('codeQ');
+  const packQ=document.getElementById('packQ');
+  const rarityQ=document.getElementById('rarityQ');
+  const grid=document.getElementById('grid');
+  const navs=[...document.querySelectorAll('nav.simple')];
+  const btnDesc=document.getElementById('btnPriceDesc');
+  const btnAsc=document.getElementById('btnPriceAsc');
+  const btnNone=document.getElementById('btnSortClear');
+  const btnImg=document.getElementById('btnToggleImages');
+  const viewer=document.getElementById('viewer');
+  const viewerImg=document.getElementById('viewerImg');
+  const viewerClose=document.getElementById('viewerClose');
+
+  // グローバル openViewer（onclick直書き/委譲の両方から呼べる）
+  window.__openViewer = function(src){
+    if(!src) return;
+    const v=viewer, img=viewerImg; if(!v||!img) return;
+
+    // リセット
+    img.onload = null; img.onerror = null;
+    img.removeAttribute('src'); // 強制リロード
+    // CORS化しない：crossoriginは付けない（file:// でも https でもOK）
+    img.setAttribute('referrerpolicy', 'no-referrer');
+
+    // 既存フォールバックリンク削除
+    const old = v.querySelector('.img-fallback'); if(old) old.remove();
+
+    img.onerror = function(){
+      // 失敗時はリンクを出す（ホットリンク対策・CORS等の保険）
+      img.style.display='none';
+      const a=document.createElement('a');
+      a.className='img-fallback';
+      a.href=src; a.target='_blank'; a.rel='noopener';
+      a.textContent='画像を新しいタブで開く';
+      a.style.color='#fff'; a.style.textDecoration='underline'; a.style.fontSize='16px'; a.style.marginTop='12px';
+      v.querySelector('.vc').appendChild(a);
+    };
+    img.onload = function(){
+      img.style.display='block';
+      const fb=v.querySelector('.img-fallback'); if(fb) fb.remove();
+    };
+
+    img.src = (''+src).trim();
+    v.classList.add('show');
+    v.style.display='flex';
+    v.style.zIndex=999999;
+  };
+  // 小文字でも呼べるようにエイリアス
+  window.__openviewer = window.__openViewer;
+
+  // データ
+  let ALL=[]; try{ ALL=JSON.parse(document.getElementById('cardsData')?.textContent||'[]'); if(!Array.isArray(ALL)) ALL=[]; }catch(e){ ALL=[]; }
+
+  // 検索正規化
+  function kataToHira(s){ return (s||'').replace(/[\u30A1-\u30F6]/g,c=>String.fromCharCode(c.charCodeAt(0)-0x60)); }
+  const kanjiReadingMap={"伝説":"でんせつ"};
+  function convertKanjiToReading(s){ for(const[k,v] of Object.entries(kanjiReadingMap)) s=s.split(k).join(v); return s; }
+  function normalizeForSearch(s){ return kataToHira((s||'').normalize('NFKC').toLowerCase()); }
+  function fmtYen(n){ return (n==null||n==='')?'-':('¥'+parseInt(n,10).toLocaleString()); }
+  function escHtml(s){ return (s||'').replace(/[&<>\"']/g, m=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[m])); }
+
+  // 状態
+  let VIEW=[]; let page=1; const PER_PAGE=__PER_PAGE__;
+  let currentSort=__INITIAL_SORT__;
+  let showImages=(localStorage.getItem('showImages')??'1')==='1';
+
+  // ビュー
+  function cardHTML_img(it){
+    const name=escHtml(it.name||''); const img=it.image||'';
+    const canOpen=!!img;
+    const onclk = canOpen ? `onclick="__openViewer('${(img||'').replace(/"/g,'&quot;')}')"` : '';
+    return `
+  <article class="card">
+    <div class="th" ${canOpen ? `data-full="${img}" ${onclk}` : ''}>
+      <img loading="lazy" src="${img}" alt="${name}" draggable="false" ${onclk}>
+    </div>
+    <div class="b">
+      <h3 class="n open-view" ${canOpen ? `data-full="${img}" ${onclk}` : ''}>${name}</h3>
+    </div>
+    <div class="price"><span class="mx">${fmtYen(it.price)}</span></div>
+  </article>`;
+  }
+
+  function cardHTML_list(it){
+    const name=escHtml(it.name||''); const img=it.image||'';
+    const meta=[it.code||'',[it.pack||'',it.booster||''].filter(Boolean).join(' / ')].filter(Boolean).join(' ・ ');
+    const canOpen=!!img;
+    const onclk = canOpen ? `onclick="__openViewer('${(img||'').replace(/"/g,'&quot;')}')"` : '';
+    return `
+  <article class="card">
+    <div class="b">
+      <h3 class="n open-view" ${canOpen ? `data-full="${img}" ${onclk}` : ''}>${name}</h3>
+      <div class="meta">${escHtml(meta)}</div>
+    </div>
+    <div class="price"><span class="mx">${fmtYen(it.price)}</span></div>
+  </article>`;
+  }
+
+  function render(){
+    grid.className=showImages?'grid grid-img':'grid grid-list';
+    const total=VIEW.length; const pages=Math.max(1,Math.ceil(total/PER_PAGE)); if(page>pages) page=pages;
+    const start=(page-1)*PER_PAGE; const rows=VIEW.slice(start,start+PER_PAGE);
+    grid.innerHTML=rows.map(showImages?cardHTML_img:cardHTML_list).join('');
+
+    const prev=page>1?`<a href="#" data-jump="prev">← 前のページ</a>`:`<a class="disabled">← 前のページ</a>`;
+    const next=page<pages?`<a href="#" data-jump="next">次のページ →</a>`:`<a class="disabled">次のページ →</a>`;
+    const navHtml=`${prev} &nbsp;&nbsp; <strong>${page}/${pages}</strong> &nbsp;&nbsp; ${next}`;
+    navs.forEach(n=>{
+      n.innerHTML=navHtml;
+      n.onclick=(e)=>{ const a=e.target.closest('a[data-jump]'); if(!a) return; e.preventDefault(); const j=a.dataset.jump; if(j==='prev') page--; else if(j==='next') page++; render(); };
+    });
+
+    // 価格がはみ出す場合は自動縮小（最小10px）
+    grid.querySelectorAll('.mx').forEach(el=>{
+      el.style.fontSize='';
+      const minPx=10, step=0.5;
+      let size=parseFloat(getComputedStyle(el).fontSize)||14;
+      while(el.scrollWidth>el.clientWidth && size>minPx){ size-=step; el.style.fontSize=size+'px'; }
+    });
+  }
+
+  function apply(){
+    const kwName=convertKanjiToReading(normalizeForSearch(nameQ.value||''));
+    const kwCode=convertKanjiToReading(normalizeForSearch(codeQ.value||''));
+    const kwPack=convertKanjiToReading(normalizeForSearch(packQ.value||''));
+    const kwRarity=convertKanjiToReading(normalizeForSearch(rarityQ.value||''));
+    VIEW=ALL.filter(it=>{
+      const sName=convertKanjiToReading(normalizeForSearch(it.name||''));
+      const sCode=convertKanjiToReading(normalizeForSearch(it.code||''));
+      const sPackBooster=convertKanjiToReading(normalizeForSearch([it.pack||'',it.booster||''].join(' ')));
+      const sRarity=convertKanjiToReading(normalizeForSearch(it.rarity||''));
+      return (!kwName||sName.includes(kwName))&&(!kwCode||sCode.includes(kwCode))&&(!kwPack||sPackBooster.includes(kwPack))&&(!kwRarity||sRarity.includes(kwRarity));
+    });
+    if(currentSort==='desc') VIEW.sort((a,b)=>(b.price||0)-(a.price||0));
+    else if(currentSort==='asc') VIEW.sort((a,b)=>(a.price||0)-(b.price||0));
+    page=1; render();
+  }
+
+  function setActiveSort(){ btnDesc.classList.toggle('active',currentSort==='desc'); btnAsc.classList.toggle('active',currentSort==='asc'); btnNone.classList.toggle('active',currentSort===null); }
+  function setImgBtn(){ btnImg.textContent=showImages?'画像OFF':'画像ON'; btnImg.classList.toggle('active',showImages); }
+
+  btnDesc?.addEventListener('click',()=>{ currentSort=(currentSort==='desc')?null:'desc'; setActiveSort(); apply(); });
+  btnAsc ?.addEventListener('click',()=>{ currentSort=(currentSort==='asc')?null:'asc'; setActiveSort(); apply(); });
+  btnNone?.addEventListener('click',()=>{ currentSort=null; setActiveSort(); apply(); });
+  btnImg?.addEventListener('click',()=>{ showImages=!showImages; localStorage.setItem('showImages',showImages?'1':'0'); setImgBtn(); render(); });
+
+  const debounce=el=>el.addEventListener('input',()=>{ clearTimeout(el._t); el._t=setTimeout(apply,120); });
+  [nameQ,codeQ,packQ,rarityQ].forEach(debounce);
+
+  // 保険：grid委譲 & document capture でも拾う（<img> 単体も対象）
+  function getFullSrc(el){
+    if(!el) return '';
+    if(el.getAttribute && el.getAttribute('data-full')) return el.getAttribute('data-full');
+    if(el.querySelector){ const inner = el.querySelector('img'); if(inner && inner.src) return inner.src; }
+    if(el.tagName==='IMG' && el.src) return el.src;
+    return '';
+  }
+  grid.addEventListener('click',(e)=>{
+    const t=e.target.closest('.th, .open-view, [data-full], img'); if(!t) return;
+    const src=getFullSrc(t); if(!src) return; e.preventDefault(); window.__openViewer(src);
+  });
+  document.addEventListener('click',(e)=>{
+    const t=e.target.closest('.th, .open-view, [data-full], img'); if(!t) return;
+    const src=getFullSrc(t); if(!src) return; e.preventDefault(); window.__openViewer(src);
+  }, true);
+
+  function closeViewer(){ viewer.classList.remove('show'); viewer.style.display='none'; viewerImg.src=''; }
+  viewerClose?.addEventListener('click', closeViewer);
+  viewer?.addEventListener('click', (e)=>{ if(e.target===viewer) closeViewer(); });
+  window.addEventListener('keydown', (e)=>{ if(e.key==='Escape') closeViewer(); });
+
+  setActiveSort(); setImgBtn(); apply();
+})();
+"""
+
+# ========= JSON埋め込み =========
+def json_for_embed(df: pd.DataFrame) -> str:
+    txt = df[["name","pack","code","rarity","booster","price","image","_s"]].to_json(force_ascii=False, orient="records")
+    return txt.replace("</","<\\/").replace("\u2028","\\u2028").replace("\u2029","\\u2029")
+
+def html_page(inline_json: str, js_source: str, logo_src: str) -> str:
+    p=[]
+    p.append("<!doctype html><html lang='ja'><head><meta charset='utf-8'>")
+    p.append("<meta name='viewport' content='width=device-width,initial-scale=1'>")
+    p.append("<style>"); p.append(base_css); p.append("</style></head><body>")
+    p.append("<div class='topbar'><div class='wrap'>")
+    p.append("<div class='topbar-row'>")
+    p.append("<div class='logo'>")
+    if logo_src:
+        p.append(f"<img src='{logo_src}' alt='CLIMAX ロゴ'>")
+    else:
+        p.append("<strong>CLIMAX</strong>")
+    p.append("</div>")
+    p.append("<div class='title'><h1>デュエマ買取表</h1></div>")
+    p.append("<div class='actions-right'>")
+    p.append("<a class='iconbtn' href='https://www.climax-card.jp/' target='_blank' rel='noopener'><svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M3 9l9-7 9 7'></path><path d='M9 22V12h6v10'></path></svg>Shop</a>")
+    p.append("<a class='iconbtn' href='https://www.climax-card.jp/member-login' target='_blank' rel='noopener'><svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4'></path><polyline points='10 17 15 12 10 7'></polyline><line x1='15' y1='12' x2='3' y2='12'></line></svg>Login</a>")
+    p.append("</div></div>")
+    p.append("<div class='controls'>")
+    p.append("<input id='nameQ' class='search' placeholder='名前：部分一致（ひらがな可）'>")
+    p.append("<input id='codeQ' class='search' placeholder='型番：例 SP4/SP5、19/100 等'>")
+    p.append("<input id='packQ' class='search' placeholder='弾：例 DMEX-01、邪神VS邪神 等'>")
+    p.append("<input id='rarityQ' class='search' placeholder='レアリティ：SR/VR 等'>")
+    p.append("<div class='btns'><button id='btnPriceDesc' class='btn'>価格高い順</button><button id='btnPriceAsc' class='btn'>価格低い順</button><button id='btnSortClear' class='btn'>標準順</button><button id='btnToggleImages' class='btn'>画像ON</button></div>")
+    p.append("</div></div>")
+    p.append("<main class='wrap'>")
+    p.append("<nav class='simple'></nav>")
+    p.append("<div id='grid' class='grid grid-img'></div>")
+    p.append("<nav class='simple'></nav>")
+    p.append("<small class='note'>完全オフライン対応：画像ONは画像/名前、画像OFFは名前をタップで拡大表示。</small>")
+    p.append("</main>")
+    p.append(f"<script id='cardsData' type='application/json'>{inline_json}</script>")
+    p.append("<div id='viewer' class='viewer'><div class='vc'><img id='viewerImg' alt=''><button id='viewerClose' class='close'>×</button></div></div>")
+    p.append("<script>"); p.append(js_source); p.append("</script>")
+    # 最後に念のためフォールバック（__openViewer が壊れてても最低限動く）
+    p.append("""
+<script>
+window.__openViewer = window.__openViewer || function(src){
+  if(!src) return;
+  var v=document.getElementById('viewer'), img=document.getElementById('viewerImg');
+  if(!v||!img) return;
+  img.removeAttribute('src');
+  img.setAttribute('referrerpolicy','no-referrer');
+  img.src = (''+src).trim();
+  v.classList.add('show'); v.style.display='flex'; v.style.zIndex=999999;
+};
+window.__openviewer = window.__openviewer || window.__openViewer;
+</script>""")
+    p.append("</body></html>")
+    return "".join(p)
+
+# ========= 出力 =========
+OUT_DIR.mkdir(parents=True, exist_ok=True)
+inline_json = json_for_embed(df)
+logo_src = logo_data_url()
+
+def write_mode(mode: str, initial_sort_js_literal: str):
+    sub = OUT_DIR / mode
+    sub.mkdir(parents=True, exist_ok=True)
+    js = base_js.replace("__PER_PAGE__", str(PER_PAGE)).replace("__INITIAL_SORT__", initial_sort_js_literal)
+    total = len(df); pages = max(1, math.ceil(total/PER_PAGE))
+    for i in range(1, pages+1):
+        html = html_page(inline_json, js, logo_src)
+        (sub / f"p{i}.html").write_text(html, encoding="utf-8")
+    (sub / "index.html").write_text("<meta http-equiv='refresh' content='0; url=p1.html'>", encoding="utf-8")
+
+write_mode("default", "null")
+write_mode("price_desc", "'desc'")
+write_mode("price_asc", "'asc'")
+
+ALL = OUT_DIR / "all"; ALL.mkdir(parents=True, exist_ok=True)
+js_all = base_js.replace("__PER_PAGE__", str(PER_PAGE)).replace("__INITIAL_SORT__", "null")
+(ALL / "index.html").write_text(html_page(inline_json, js_all, logo_src), encoding="utf-8")
+
+(OUT_DIR / "index.html").write_text("<meta http-equiv='refresh' content='0; url=default/p1.html'>", encoding="utf-8")
+
+print(f"[OK] 生成完了 → {OUT_DIR.resolve()} / 1ページ {PER_PAGE}件 / ロゴ: {'embedded' if logo_src else 'なし'}")
