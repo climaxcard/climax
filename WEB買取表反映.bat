@@ -5,7 +5,7 @@ chcp 65001 >nul
 
 rem ====== 設定 ======
 set "PY=C:\Users\user\AppData\Local\Programs\Python\Python313\python.exe"
-set "OUT_DIR=docs\default"
+set "OUT_DIR=docs"     rem ★必ず docs 固定（スクリプト側が default/price_* を自動付与する）
 set "PER_PAGE=80"
 set "BUILD_THUMBS=0"
 set "DO_GIT=1"
@@ -20,7 +20,7 @@ if not defined EXCEL_PATH (
   )
 )
 if not defined EXCEL_PATH (
-  echo [NG] Excelが見つかりません。publish_simple.bat "C:\full\path\buylist.xlsx"
+  echo [NG] Excelが見つかりません。WEB買取表反映.bat "C:\full\path\buylist.xlsx"
   pause & exit /b 1
 )
 if not exist "%EXCEL_PATH%" (
@@ -33,7 +33,8 @@ echo [*] PER_PAGE=%PER_PAGE%  BUILD_THUMBS=%BUILD_THUMBS%
 
 rem ====== 出力先作成 ======
 if not exist "%OUT_DIR%" mkdir "%OUT_DIR%" >nul 2>&1
-set "DEFAULT_INDEX=%CD%\docs\default\index.html"
+set "DEFAULT_DIR=%CD%\docs\default"
+set "DEFAULT_INDEX=%DEFAULT_DIR%\index.html"
 set "ROOT_INDEX=%CD%\docs\index.html"
 
 rem ====== 生成 ======
@@ -42,25 +43,49 @@ set "PER_PAGE=%PER_PAGE%"
 set "BUILD_THUMBS=%BUILD_THUMBS%"
 "%PY%" "%~dp0gen_buylist.py" "%EXCEL_PATH%" || goto FAIL
 
-rem ====== 出力確認＆同期（保険）======
-if exist "%DEFAULT_INDEX%" goto HAVE_DEFAULT
-if exist "%ROOT_INDEX%" goto SYNC_FROM_ROOT
-echo [NG] 生成物が見つかりません。gen_buylist.py の出力先を確認してください。
-goto FAIL
+rem ====== 出力確認（PowerShellで確実にサイズ取得＆中身チェック）======
+set "DEFAULT_DIR=%CD%\docs\default"
+set "DEFAULT_INDEX=%DEFAULT_DIR%\index.html"
+set "ROOT_INDEX=%CD%\docs\index.html"
 
-:HAVE_DEFAULT
+for /f "usebackq delims=" %%S in (`powershell -NoP -C "(Get-Item '%DEFAULT_INDEX%' -EA SilentlyContinue).Length ^| ForEach-Object { $_ -as [int] } ; if(-not $?) {0} ; if($null -eq (Get-Item '%DEFAULT_INDEX%' -EA SilentlyContinue)){0}"`) do set "SZ=%%S"
+
+echo [dbg] index=%DEFAULT_INDEX%
+echo [dbg] size=%SZ% bytes
+
+rem === index.htmlが小さい or <html>タグが無い → 自動修復 ===
+for /f "usebackq delims=" %%H in (`powershell -NoP -C "if(Test-Path '%DEFAULT_INDEX%'){ $c=Get-Content '%DEFAULT_INDEX%' -Raw; if($c -match '<html' ){ '1' } else { '0' } } else { '0' }"`) do set "HAS_HTML=%%H"
+echo [dbg] has_html=%HAS_HTML%
+
+if "%SZ%"=="" set "SZ=0"
+if %SZ% LSS 2048 goto FIX_INDEX
+if "%HAS_HTML%"=="0" goto FIX_INDEX
+
 echo [OK] generated -> "%DEFAULT_INDEX%"
-goto STAMP
+goto INJECT_BASE
 
-:SYNC_FROM_ROOT
-echo [!] gen_buylist.py が "docs" に出力 → default に同期
-copy /y "%ROOT_INDEX%" "%DEFAULT_INDEX%" >nul
-for %%D in (assets static dist js css img images fonts) do (
-  if exist "%CD%\docs\%%D" robocopy "%CD%\docs\%%D" "%CD%\docs\default\%%D" /E /NFL /NDL /NJH /NJS /NP >nul
+:FIX_INDEX
+echo [!] index.html が不正（size=%SZ%, html=%HAS_HTML%）→ 自動修復します
+if exist "%DEFAULT_DIR%\p1.html" (
+  copy /y "%DEFAULT_DIR%\p1.html" "%DEFAULT_INDEX%" >nul || goto FAIL
+  echo [fix] index.html <- p1.html へ差し替え
+) else if exist "%ROOT_INDEX%" (
+  copy /y "%ROOT_INDEX%" "%DEFAULT_INDEX%" >nul
+  for %%D in (assets static dist js css img images fonts) do (
+    if exist "%CD%\docs\%%D" robocopy "%CD%\docs\%%D" "%DEFAULT_DIR%\%%D" /E /NFL /NDL /NJH /NJS /NP >nul
+  )
+  echo [fix] root docs から default に同期
+) else (
+  echo [NG] 有効な index.html が見つかりません（p1.html も root も無し）
+  goto FAIL
 )
-goto STAMP
 
-:STAMP
+:INJECT_BASE
+rem ====== <base> 自動挿入（head がある時だけ、安全に）======
+powershell -NoP -C ^
+  "$p='%DEFAULT_INDEX%'; if(Test-Path $p){$h=Get-Content $p -Raw; if($h -match '</head>' -and $h -notmatch '<base href='){ $h=$h -replace '</head>','<base href=\"/climax/default/\" /></head>'; Set-Content -Encoding UTF8 $p $h; '[/] base inserted' } else { '[/] base ok/skip' }}"
+
+
 rem ====== build_stamp を一時ファイル→移動（ロックに強い）======
 set "TMPSTAMP=%TEMP%\stamp_%RANDOM%%RANDOM%.txt"
 > "%TMPSTAMP%" echo built at %date% %time% from "%EXCEL_PATH%"
@@ -74,6 +99,7 @@ goto GIT
 
 :GIT
 where git >nul 2>&1 || set "DO_GIT=0"
+git rev-parse --is-inside-work-tree >nul 2>&1 || set "DO_GIT=0"
 if not "%DO_GIT%"=="1" goto OPEN
 
 echo [*] Git commit/pull/push...
@@ -96,7 +122,7 @@ echo [NG] Could not remove Git lock files. Aborting...
 goto FAIL
 
 :GIT_UNLOCKED
-rem ==== pullで引っかかる生成サブフォルダを事前削除（静音）====
+rem ==== 衝突しがちな生成サブフォルダを事前削除（静音）====
 for %%D in (price_asc price_desc search dist) do (
   if exist "%OUT_DIR%\%%D" (
     attrib -r -s -h /s /d "%OUT_DIR%\%%D" >nul 2>&1
@@ -111,6 +137,8 @@ if exist "buylist.xlsx" git add "buylist.xlsx"
 rem ==== 変更があればコミット ====
 git diff --cached --quiet
 if errorlevel 1 (
+  for /f "delims=" %%B in ('git rev-parse --abbrev-ref HEAD') do set "BRANCH=%%B"
+  if not defined BRANCH set "BRANCH=main"
   set "TS=%date%_%time%"
   set "TS=%TS::=%"
   set "TS=%TS:/=%"
@@ -121,8 +149,8 @@ if errorlevel 1 (
   echo [i] 変更なし（commit省略）
 )
 
-rem ==== まず FF だけ試す → ダメでも push 優先 ====
-git fetch origin || goto FAIL
+rem ==== まず FF-only を試す → ダメでも push 優先 ====
+git fetch origin
 git pull --ff-only origin main
 if errorlevel 1 (
   echo [!] fast-forward 不可 → pull をスキップして push
@@ -134,17 +162,16 @@ goto OPEN
 
 :OPEN
 rem ====== 完成ページを開く ======
-if exist ".\docs\default\index.html" (
-  start "" ".\docs\default\index.html"
+if exist "%DEFAULT_INDEX%" (
+  start "" "%DEFAULT_INDEX%"
   echo [i] GitHub Pages URL: https://climaxcard.github.io/climax/default/?v=%date%_%time%
-) else if exist ".\docs\index.html" (
-  start "" ".\docs\index.html"
+) else if exist "%ROOT_INDEX%" (
+  start "" "%ROOT_INDEX%"
   echo [i] GitHub Pages URL: https://climaxcard.github.io/climax/?v=%date%_%time%
 )
 exit /b 0
 
-
 :FAIL
-echo [NG] 生成失敗。上のログを確認してください。
+echo [NG] 処理失敗。上のログを確認してください。
 pause
 exit /b 1
