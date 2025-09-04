@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-デュエマ買取表 静的ページ生成（完成版・中央タイトル＋ロゴ・数字タブ＋SPは2行ナビ）
-- CSV/Excel/URL 自動対応（Google Sheets閲覧URLやOneDrive共有URLもOK）
-- 二重ヘッダ(日本語/英語キー)自動正規化（display_name / cardnumber が基準）
+デュエマ買取表 静的ページ生成（xlsx専用・完成版）
+- 入力は Excel の .xlsx/.xlsm/.xls のみ（URL/CSV対応は外しています）
+- 0件対策：まず header=0（1行ヘッダ想定）で読む → ダメなら救済（header=None → 2重ヘッダ検出）
+- 二重ヘッダ(日本語/英語キー)自動正規化（display_name / cardnumber など / 商品名 / カード番号）
 - 列は「ヘッダ名優先 → 位置フォールバック(C/E/F/G/H/O/Q)」
 - 画像URLは Q列系（allow_auto_print_label 等）最優先。=IMAGE() 抽出にも対応
 - 画像ON時は「カード名＋型番＋買取価格のみ」表示（スマホ最適化：型番はバッジ・nowrap）
@@ -18,7 +19,7 @@ import html as html_mod
 import unicodedata as ud
 import base64, mimetypes, os, sys, hashlib, io, json, re, glob, zipfile
 
-# ==== 依存（BUILD_THUMBS=1 の場合のみ使う; ローダーは requests 必須）====
+# ==== 依存（BUILD_THUMBS=1 の場合のみ使う）====
 try:
     import requests
     from PIL import Image
@@ -29,9 +30,9 @@ except Exception:
 # ========= 設定 =========
 DEFAULT_EXCEL = "buylist.xlsx"
 ALT_EXCEL     = "data/buylist.xlsx"
-FALLBACK_WINDOWS = r"C:\Users\user\Desktop\デュエマ買取表\buylist.xlsx"
+FALLBACK_WINDOWS = r"C:\Users\user\OneDrive\Desktop\デュエマ買取表\buylist.xlsx"
 
-# 入力は CSV/Excel/URL 自動検出
+# xlsxのみ想定
 EXCEL_PATH = os.getenv("EXCEL_PATH", DEFAULT_EXCEL)
 SHEET_NAME = os.getenv("SHEET_NAME", "シート1")
 
@@ -92,76 +93,40 @@ def logo_to_data_uri(p: Path|None) -> str:
 
 LOGO_URI = logo_to_data_uri(find_logo_path())
 
-# ========= 入力ファイル 読み込み・正規化（CSV/Excel/URL 自動対応） =========
-def _read_csv_auto(src) -> pd.DataFrame:
-    """
-    src: Path | str | BytesIO
-    代表的なエンコーディングを順に試す
-    """
-    encs = ("utf-8-sig", "cp932", "utf-8")
-    last_err = None
-    for enc in encs:
-        try:
-            return pd.read_csv(src, encoding=enc)
-        except Exception as e:
-            last_err = e
-    # 最後にエンコーディング指定なしで試みる
-    return pd.read_csv(src)
+# ========= 入力ファイル 読み込み・正規化（xlsx専用） =========
 
 def _normalize_two_header_layout(df: pd.DataFrame) -> pd.DataFrame:
-    """二重ヘッダ（2行見出し→英語キー行→データ）を、英語キー行を正式ヘッダに整える。"""
+    """
+    二重ヘッダ（見出し行がついていて、その下にキー行がある）を、キー行で正式ヘッダに整える。
+    英語: display_name / cardnumber
+    日本語: 商品名 / カード番号
+    """
     try:
         cand = []
         m = min(12, len(df))
         for i in range(m):
             row = df.iloc[i].astype(str).tolist()
-            if "display_name" in row and "cardnumber" in row:
+            rowl = [s.strip() for s in row]
+            if (
+                ("display_name" in rowl and "cardnumber" in rowl) or
+                ("商品名" in rowl and "カード番号" in rowl)
+            ):
                 cand.append(i)
         if not cand:
             return df
         hdr = cand[0]
-        start = hdr + 2
+        start = hdr + 1  # ヘッダ直下からデータ（一般的なケース）
         df2 = df.iloc[start:].copy()
         df2.columns = df.iloc[hdr].tolist()
         return df2.reset_index(drop=True)
     except Exception:
         return df
 
-def _is_url(s: str|None) -> bool:
-    return isinstance(s, str) and s.lower().startswith(("http://", "https://"))
-
-def _to_gsheets_export(url: str) -> str:
-    # docs.google.com の閲覧URL → CSVエクスポートURLに自動変換
-    m = re.search(r"https://docs.google.com/spreadsheets/d/([a-zA-Z0-9-_]+)", url)
-    if not m:
-        return url
-    gid = None
-    mg = re.search(r"[?&]gid=(\d+)", url)
-    if mg:
-        gid = mg.group(1)
-    return f"https://docs.google.com/spreadsheets/d/{m.group(1)}/export?format=csv" + (f"&gid={gid}" if gid else "")
-
-def _to_onedrive_direct(url: str) -> str:
-    # OneDrive/SharePoint のプレビューURL → 直DL化（簡易）
-    if ("1drv.ms" in url or "sharepoint.com" in url) and "download=1" not in url:
-        url += ("&" if "?" in url else "?") + "download=1"
-    return url
-
-def _download_bytes(url: str) -> bytes:
-    if requests is None:
-        raise RuntimeError("requests がありません。`pip install requests` を追加してください。")
-    url = _to_onedrive_direct(_to_gsheets_export(url))
-    r = requests.get(url, timeout=60)
-    r.raise_for_status()
-    return r.content
-
-def _resolve_input(pref: str|None):
-    # URLそのまま対応
-    if _is_url(pref):
-        return str(pref)
+def _resolve_input(pref: str|None) -> Path:
+    # xlsx/xlsm/xls をローカルのみ探索
     cands = []
     if pref: cands.append(Path(pref))
-    cands += [Path("buylist.csv"), Path("buylist.xlsx"), Path(ALT_EXCEL), Path(FALLBACK_WINDOWS)]
+    cands += [Path("buylist.xlsx"), Path(ALT_EXCEL), Path(FALLBACK_WINDOWS)]
     for p in cands:
         try:
             if p.exists() and p.is_file():
@@ -169,49 +134,40 @@ def _resolve_input(pref: str|None):
         except Exception:
             pass
     files = sorted(
-        [Path(p) for p in glob.glob("*.csv")] + [Path(p) for p in glob.glob("*.xlsx")],
+        [Path(p) for p in glob.glob("*.xlsx")] + [Path(p) for p in glob.glob("*.xlsm")] + [Path(p) for p in glob.glob("*.xls")],
         key=lambda x: x.stat().st_mtime, reverse=True
     )
     if files: return files[0]
-    raise FileNotFoundError("CSV/Excel が見つかりません。")
+    raise FileNotFoundError("Excel(.xlsx/.xlsm/.xls) が見つかりません。")
 
 def load_buylist_any(path_hint: str, sheet_name: str|None) -> pd.DataFrame:
     """
-    URL, CSV, XLSX/xlsm/xls を自動判別して読み込む。
-    - Google Sheets 閲覧URLは CSVエクスポートURLに自動変換
-    - OneDrive/SharePoint は download=1 を自動付与
-    - xlsx偽装HTML/CSVも先頭バイトで救済
+    ローカルの xlsx/xlsm/xls のみを読み込む。
+    - まず header=0 で読み、期待ヘッダがあればそのまま
+    - 無ければ救済: header=None → 二重ヘッダ正規化
     """
     p = _resolve_input(path_hint)
 
-    # ---- URL入力 ----
-    if isinstance(p, str) and _is_url(p):
-        raw = _download_bytes(p)
-        # 先頭バイトで XLSX (ZIP) か CSV/HTML を推定
-        if raw[:4] == b"PK\x03\x04":
-            try:
-                bio = io.BytesIO(raw)
-                df0 = pd.read_excel(bio, sheet_name=(sheet_name or 0), header=None, engine="openpyxl")
-                return _normalize_two_header_layout(df0)
-            except Exception:
-                pass  # 下のCSV救済へ
-        # CSV/TSV/HTML → とりあえず CSV として読む（エンコーディング自動トライ）
-        bio = io.BytesIO(raw)
+    # .xlsx / .xlsm
+    if isinstance(p, Path) and p.suffix.lower() in (".xlsx", ".xlsm"):
+        # 先に header=0（通常の1行ヘッダ）
         try:
-            df0 = _read_csv_auto(bio)
-            return _normalize_two_header_layout(df0)
+            if sheet_name:
+                df0 = pd.read_excel(p, sheet_name=sheet_name, header=0, engine="openpyxl")
+            else:
+                xls = pd.ExcelFile(p, engine="openpyxl")
+                df0 = pd.read_excel(xls, sheet_name=xls.sheet_names[0], header=0, engine="openpyxl")
+            cols = set(map(str, df0.columns))
+            expect_any = {
+                "display_name", "cardnumber", "buy_price", "allow_auto_print_label",
+                "商品名", "カード番号", "買取価格", "画像URL"
+            }
+            if cols & expect_any:
+                return _normalize_two_header_layout(df0)
         except Exception:
-            # 最後の救済として Excel 解釈を試す
-            bio.seek(0)
-            df0 = pd.read_excel(bio, sheet_name=(sheet_name or 0), header=None, engine="openpyxl")
-            return _normalize_two_header_layout(df0)
+            pass
 
-    # ---- ローカルファイル ----
-    if isinstance(p, Path) and p.suffix.lower()==".csv":
-        df0 = _read_csv_auto(p)
-        return _normalize_two_header_layout(df0)
-
-    if isinstance(p, Path) and p.suffix.lower() in (".xlsx",".xlsm"):
+        # 救済：header=None → 2重ヘッダ検出
         try:
             if sheet_name:
                 df0 = pd.read_excel(p, sheet_name=sheet_name, header=None, engine="openpyxl")
@@ -219,26 +175,22 @@ def load_buylist_any(path_hint: str, sheet_name: str|None) -> pd.DataFrame:
                 xls = pd.ExcelFile(p, engine="openpyxl")
                 df0 = pd.read_excel(xls, sheet_name=xls.sheet_names[0], header=None, engine="openpyxl")
         except zipfile.BadZipFile:
-            # 拡張子はxlsxだが中身がCSV/HTMLだったときの救済
-            df0 = _read_csv_auto(p)
+            raise RuntimeError("buylist.xlsx の中身が壊れています。Excelで開いて .xlsx として保存し直してください。")
         return _normalize_two_header_layout(df0)
 
+    # .xls（旧形式）
     if isinstance(p, Path) and p.suffix.lower()==".xls":
-        # 旧Excel。xlrd が必要（requirements に xlrd を追加）
+        try:
+            df0 = pd.read_excel(p, sheet_name=(sheet_name or 0), header=0, engine="xlrd")
+            cols = set(map(str, df0.columns))
+            if cols & {"display_name","cardnumber","商品名","カード番号"}:
+                return _normalize_two_header_layout(df0)
+        except Exception:
+            pass
         df0 = pd.read_excel(p, sheet_name=(sheet_name or 0), header=None, engine="xlrd")
         return _normalize_two_header_layout(df0)
 
-    # 拡張子不明 → ヘッダ判定で救済
-    if isinstance(p, Path):
-        with open(p, "rb") as f:
-            head = f.read(4)
-        if head == b"PK\x03\x04":
-            df0 = pd.read_excel(p, sheet_name=(sheet_name or 0), header=None, engine="openpyxl")
-        else:
-            df0 = _read_csv_auto(p)
-        return _normalize_two_header_layout(df0)
-
-    raise RuntimeError("未対応の入力形式です。")
+    raise RuntimeError("未対応の拡張子です。xlsx/xlsm/xls のみ対応。")
 
 df_raw = load_buylist_any(EXCEL_PATH, SHEET_NAME)
 
@@ -488,14 +440,13 @@ input.search:focus{ box-shadow:0 0 0 2px rgba(17,24,39,.08) }
   position:absolute; top:-12px; right:-12px; background:#fff; border:1px solid var(--border); color:#111;
   border-radius:999px; width:38px; height:38px; cursor:pointer;
 }
-/* ビューワ表示中は背面スクロール停止 */
 body.modal-open{ overflow:hidden; }
 
-/* ===== ページネーション（PC=左/中央/右、SP=2行） ===== */
+/* ===== ページネーション ===== */
 nav.simple{ margin:14px 0; }
 nav.simple .pager{
   display:grid;
-  grid-template-columns:auto 1fr auto; /* 左 / 中央 / 右 */
+  grid-template-columns:auto 1fr auto;
   align-items:center;
   gap:12px;
 }
@@ -517,7 +468,7 @@ nav.simple .num[aria-current="page"]{
 }
 nav.simple .ellipsis{border:none;background:transparent;cursor:default;padding:0 4px}
 
-/* SP二段（上：数字／下：最初・前・次・最後） */
+/* SP二段 */
 nav.simple .controls-mobile{ display:none; }
 
 /* ======== SP 調整 ======== */
@@ -525,21 +476,18 @@ nav.simple .controls-mobile{ display:none; }
   nav.simple .pager{
     display:flex; flex-direction:column; gap:6px;
   }
-  nav.simple .left, nav.simple .right{ display:none; } /* PC用左右は隠す */
-
-  /* 数字：横スクロール＋端見切れ防止 */
+  nav.simple .left, nav.simple .right{ display:none; }
   nav.simple .center{
     order:1; justify-content:center; flex-wrap:nowrap; overflow-x:auto; max-width:100%;
     -webkit-overflow-scrolling: touch;
-    padding-inline:10px;             /* 端の数字が切れない */
-    scroll-padding-inline:10px;      /* スクロール末端での見切れ防止 */
+    padding-inline:10px;
+    scroll-padding-inline:10px;
     gap:6px;
   }
   nav.simple .center::-webkit-scrollbar{ display:none; }
   nav.simple .center .num,
   nav.simple .center .ellipsis{ flex:0 0 auto; }
 
-  /* 2行目：最初/前/次/最後（文言変更なし / 見切れ防止） */
   nav.simple .controls-mobile{
     order:2; display:flex; flex-wrap:nowrap; justify-content:center;
     gap:4px; padding:0 6px; max-width:100%; overflow:hidden;
@@ -550,7 +498,7 @@ nav.simple .controls-mobile{ display:none; }
   }
 }
 
-/* ===== SPレイアウト（ヘッダ2段等） ===== */
+/* ===== SPレイアウト ===== */
 @media (max-width:700px){
   :root{ --header-h: 144px; }
   .header-wrap{
@@ -663,7 +611,7 @@ base_js = r"""
   if (!ALL.length) {
     const hint = document.createElement('p');
     hint.style.cssText='color:#dc2626;padding:10px;margin:10px;border:1px dashed #fecaca;background:#fff5f5';
-    hint.textContent = 'データが0件です。入力CSV/Excelのヘッダと列位置を確認してください。';
+    hint.textContent = 'データが0件です。入力Excelのヘッダと列位置を確認してください。';
     document.querySelector('main')?.prepend(hint);
   }
 
@@ -785,43 +733,26 @@ base_js = r"""
     page=1; render();
   }
 
-  // ページ番号：PC=前後3 / SP=前後2
   function buildPageButtons(cur, total){
     const around = matchMedia('(max-width: 700px)').matches ? 2 : 3;
     const btns = [];
     btns.push({type:'num', page:1});
-
     const start = Math.max(2, cur - around);
     const end   = Math.min(total - 1, cur + around);
-
     if (start > 2) btns.push({type:'ellipsis'});
     for (let p = start; p <= end; p++){
       if (p >= 2 && p <= total-1) btns.push({type:'num', page:p});
     }
     if (end < total - 1) btns.push({type:'ellipsis'});
-
     if (total > 1) btns.push({type:'num', page:total});
     return btns;
   }
 
-  // PC：左(最初/前) | 中央(数字) | 右(次/最後)
-  // SP：上(数字) / 下(最初 前 次 最後)
   function renderPager(cur, total){
-    const first = (cur>1)
-      ? `<a href="#" data-jump="first" class="first">≪ 最初のページ</a>`
-      : `<a class="disabled">≪ 最初のページ</a>`;
-
-    const prev = (cur>1)
-      ? `<a href="#" data-jump="prev" class="prev">← 前のページ</a>`
-      : `<a class="disabled">← 前のページ</a>`;
-
-    const next = (cur<total)
-      ? `<a href="#" data-jump="next" class="next">次のページ →</a>`
-      : `<a class="disabled">次のページ →</a>`;
-
-    const last = (cur<total)
-      ? `<a href="#" data-jump="last" class="last">最後のページ ≫</a>`
-      : `<a class="disabled">最後のページ ≫</a>`;
+    const first = (cur>1) ? `<a href="#" data-jump="first" class="first">≪ 最初のページ</a>` : `<a class="disabled">≪ 最初のページ</a>`;
+    const prev  = (cur>1) ? `<a href="#" data-jump="prev"  class="prev">← 前のページ</a>`  : `<a class="disabled">← 前のページ</a>`;
+    const next  = (cur<total) ? `<a href="#" data-jump="next" class="next">次のページ →</a>` : `<a class="disabled">次のページ →</a>`;
+    const last  = (cur<total) ? `<a href="#" data-jump="last" class="last">最後のページ ≫</a>` : `<a class="disabled">最後のページ ≫</a>`;
 
     const nums = buildPageButtons(cur, total).map(item=>{
       if (item.type==='ellipsis') return `<span class="ellipsis">…</span>`;
@@ -859,7 +790,7 @@ base_js = r"""
           if(!src) return; 
           viewerImg.src = src; 
           viewer.classList.add('show');
-          document.body.classList.add('modal-open');   // 背面スクロール停止
+          document.body.classList.add('modal-open');
         });
       });
     }
@@ -925,7 +856,7 @@ base_js = r"""
   function closeViewer(){
     viewer.classList.remove('show');
     viewerImg.src='';
-    document.body.classList.remove('modal-open');  // スクロール再開
+    document.body.classList.remove('modal-open');
   }
   viewerClose?.addEventListener('click', closeViewer);
   viewer?.addEventListener('click', (e)=>{ if(e.target===viewer) closeViewer(); });
@@ -1003,7 +934,14 @@ write_mode("price_asc",  "'asc'",  "デュエマ買取表（price_asc）")
 # ルートは default/ にリダイレクト
 (OUT_DIR / "index.html").write_text("<meta http-equiv='refresh' content='0; url=default/'>", encoding="utf-8")
 
-print(f"[*] Excel/CSV/URL: {EXCEL_PATH!r}")
+# （任意）簡易デバッグ出力
+try:
+    print(f"[*] rows={len(df_raw)}, cols={df_raw.shape[1]}")
+    print("[*] head cols:", list(map(str, df_raw.columns))[:12])
+except Exception:
+    pass
+
+print(f"[*] Excel: {EXCEL_PATH!r}")
 print(f"[*] SHEET_NAME={SHEET_NAME!r}")
 print(f"[*] PER_PAGE={PER_PAGE}  BUILD_THUMBS={'1' if BUILD_THUMBS else '0'}")
 print(f"[LOGO] {'embedded' if LOGO_URI else 'not found (fallback text used)'}")
