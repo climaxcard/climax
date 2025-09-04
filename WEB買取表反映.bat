@@ -2,31 +2,32 @@
 setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
 
-rem === (必要なら) UTF-8表示に切替。文字化けするならこの行を残して、ファイルはUTF-8で保存。
-rem === 逆にANSI(CP932)保存するなら、この行は消してください。
+rem ==============================
+rem  設定
+rem ==============================
 chcp 65001 >nul
 
-rem === Python のパス ===
+rem Python のパス（必要に応じて変更）
 set "PY=C:\Users\user\AppData\Local\Programs\Python\Python313\python.exe"
 
-rem === 出力やビルド設定 ===
-set "OUT_DIR=docs"
+rem 出力やビルド
+set "OUT_DIR=docs\default"
 set "PER_PAGE=80"
 set "BUILD_THUMBS=0"
 set "DO_GIT=1"
 
-rem === Excelパス 受け取り & 自動検出 ===
+rem ==============================
+rem  Excel パス 受け取り & 自動検出
+rem ==============================
 set "EXCEL_PATH="
 
 if not "%~1"=="" (
-  rem 引数があれば正規化（ドラッグ&ドロップやスペース対応）
   for %%F in ("%~1") do (
     if exist "%%~fF" set "EXCEL_PATH=%%~fF"
   )
 )
 
 if not defined EXCEL_PATH (
-  rem よくある配置を探索（拡張子も許容）
   for %%E in (xlsx xlsm csv) do (
     if not defined EXCEL_PATH if exist "%CD%\buylist.%%E" set "EXCEL_PATH=%CD%\buylist.%%E"
     if not defined EXCEL_PATH if exist "%CD%\data\buylist.%%E" set "EXCEL_PATH=%CD%\data\buylist.%%E"
@@ -48,22 +49,26 @@ if not exist "%EXCEL_PATH%" (
 echo [*] Excel: "%EXCEL_PATH%"
 echo [*] PER_PAGE=%PER_PAGE%  BUILD_THUMBS=%BUILD_THUMBS%
 
-rem === 生成 ===
+rem ==============================
+rem  生成
+rem ==============================
 if not exist "%OUT_DIR%" mkdir "%OUT_DIR%" >nul 2>&1
 set "OUT_DIR=%OUT_DIR%"
 set "PER_PAGE=%PER_PAGE%"
 set "BUILD_THUMBS=%BUILD_THUMBS%"
 
-rem gen_buylist.py と同じフォルダ想定。場所が違うならパス修正してください。
 "%PY%" "%~dp0gen_buylist.py" "%EXCEL_PATH%" || goto :fail
 
-rem === ビルドスタンプ ===
+rem ビルドスタンプ
 > "%OUT_DIR%\.build_stamp.txt" echo built at %date% %time% from "%EXCEL_PATH%"
 
-rem === Git（任意） ===
+rem ==============================
+rem  Git（必要最小限だけ add）
+rem ==============================
 where git >nul 2>&1 || set "DO_GIT=0"
 if "%DO_GIT%"=="1" (
   echo [*] Git pull/commit/push...
+
   for %%L in (".git\index.lock" ".git\shallow.lock" ".git\packed-refs.lock" ".git\logs\HEAD.lock") do (
     if exist "%%~L" del /f /q "%%~L"
   )
@@ -71,20 +76,27 @@ if "%DO_GIT%"=="1" (
   git fetch origin || goto :fail
   git pull --rebase --autostash origin main || goto :fail
 
-  git add -A || goto :fail
+  rem ★ ここがポイント：docs と buylist.xlsx だけをステージ
+  git add "%OUT_DIR%" || goto :fail
+  if exist "buylist.xlsx" git add "buylist.xlsx"
+
+  rem （任意）生成スクリプトも管理したい場合は次行のコメントを外す
+  rem git add gen_buylist.py
+
   git diff --cached --quiet && (
     echo [i] 変更なし（commit省略）
-  ) || (
+  ) else (
     git commit -m "update buylist %date% %time:~0,5%" || goto :fail
+    git push origin main || goto :fail
+    echo [OK] publish done
   )
-
-  git push origin main || goto :fail
-  echo [OK] publish done
 ) else (
   echo [i] Git skipped
 )
 
-rem === 完成ページを開く ===
+rem ==============================
+rem  完成ページを開く
+rem ==============================
 if exist ".\docs\default\index.html" (
   start "" ".\docs\default\index.html"
 ) else if exist ".\docs\index.html" (
