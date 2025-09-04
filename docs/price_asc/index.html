@@ -91,14 +91,13 @@ input.search:focus{ box-shadow:0 0 0 2px rgba(17,24,39,.08) }
   position:absolute; top:-12px; right:-12px; background:#fff; border:1px solid var(--border); color:#111;
   border-radius:999px; width:38px; height:38px; cursor:pointer;
 }
-/* ビューワ表示中は背面スクロール停止 */
 body.modal-open{ overflow:hidden; }
 
-/* ===== ページネーション（PC=左/中央/右、SP=2行） ===== */
+/* ===== ページネーション ===== */
 nav.simple{ margin:14px 0; }
 nav.simple .pager{
   display:grid;
-  grid-template-columns:auto 1fr auto; /* 左 / 中央 / 右 */
+  grid-template-columns:auto 1fr auto;
   align-items:center;
   gap:12px;
 }
@@ -120,7 +119,7 @@ nav.simple .num[aria-current="page"]{
 }
 nav.simple .ellipsis{border:none;background:transparent;cursor:default;padding:0 4px}
 
-/* SP二段（上：数字／下：最初・前・次・最後） */
+/* SP二段 */
 nav.simple .controls-mobile{ display:none; }
 
 /* ======== SP 調整 ======== */
@@ -128,21 +127,18 @@ nav.simple .controls-mobile{ display:none; }
   nav.simple .pager{
     display:flex; flex-direction:column; gap:6px;
   }
-  nav.simple .left, nav.simple .right{ display:none; } /* PC用左右は隠す */
-
-  /* 数字：横スクロール＋端見切れ防止 */
+  nav.simple .left, nav.simple .right{ display:none; }
   nav.simple .center{
     order:1; justify-content:center; flex-wrap:nowrap; overflow-x:auto; max-width:100%;
     -webkit-overflow-scrolling: touch;
-    padding-inline:10px;             /* 端の数字が切れない */
-    scroll-padding-inline:10px;      /* スクロール末端での見切れ防止 */
+    padding-inline:10px;
+    scroll-padding-inline:10px;
     gap:6px;
   }
   nav.simple .center::-webkit-scrollbar{ display:none; }
   nav.simple .center .num,
   nav.simple .center .ellipsis{ flex:0 0 auto; }
 
-  /* 2行目：最初/前/次/最後（文言変更なし / 見切れ防止） */
   nav.simple .controls-mobile{
     order:2; display:flex; flex-wrap:nowrap; justify-content:center;
     gap:4px; padding:0 6px; max-width:100%; overflow:hidden;
@@ -153,7 +149,7 @@ nav.simple .controls-mobile{ display:none; }
   }
 }
 
-/* ===== SPレイアウト（ヘッダ2段等） ===== */
+/* ===== SPレイアウト ===== */
 @media (max-width:700px){
   :root{ --header-h: 144px; }
   .header-wrap{
@@ -263,7 +259,7 @@ small.note{color:var(--muted)}
   if (!ALL.length) {
     const hint = document.createElement('p');
     hint.style.cssText='color:#dc2626;padding:10px;margin:10px;border:1px dashed #fecaca;background:#fff5f5';
-    hint.textContent = 'データが0件です。入力CSV/Excelのヘッダと列位置を確認してください。';
+    hint.textContent = 'データが0件です。入力Excelのヘッダと列位置を確認してください。';
     document.querySelector('main')?.prepend(hint);
   }
 
@@ -385,43 +381,26 @@ small.note{color:var(--muted)}
     page=1; render();
   }
 
-  // ページ番号：PC=前後3 / SP=前後2
   function buildPageButtons(cur, total){
     const around = matchMedia('(max-width: 700px)').matches ? 2 : 3;
     const btns = [];
     btns.push({type:'num', page:1});
-
     const start = Math.max(2, cur - around);
     const end   = Math.min(total - 1, cur + around);
-
     if (start > 2) btns.push({type:'ellipsis'});
     for (let p = start; p <= end; p++){
       if (p >= 2 && p <= total-1) btns.push({type:'num', page:p});
     }
     if (end < total - 1) btns.push({type:'ellipsis'});
-
     if (total > 1) btns.push({type:'num', page:total});
     return btns;
   }
 
-  // PC：左(最初/前) | 中央(数字) | 右(次/最後)
-  // SP：上(数字) / 下(最初 前 次 最後)
   function renderPager(cur, total){
-    const first = (cur>1)
-      ? `<a href="#" data-jump="first" class="first">≪ 最初のページ</a>`
-      : `<a class="disabled">≪ 最初のページ</a>`;
-
-    const prev = (cur>1)
-      ? `<a href="#" data-jump="prev" class="prev">← 前のページ</a>`
-      : `<a class="disabled">← 前のページ</a>`;
-
-    const next = (cur<total)
-      ? `<a href="#" data-jump="next" class="next">次のページ →</a>`
-      : `<a class="disabled">次のページ →</a>`;
-
-    const last = (cur<total)
-      ? `<a href="#" data-jump="last" class="last">最後のページ ≫</a>`
-      : `<a class="disabled">最後のページ ≫</a>`;
+    const first = (cur>1) ? `<a href="#" data-jump="first" class="first">≪ 最初のページ</a>` : `<a class="disabled">≪ 最初のページ</a>`;
+    const prev  = (cur>1) ? `<a href="#" data-jump="prev"  class="prev">← 前のページ</a>`  : `<a class="disabled">← 前のページ</a>`;
+    const next  = (cur<total) ? `<a href="#" data-jump="next" class="next">次のページ →</a>` : `<a class="disabled">次のページ →</a>`;
+    const last  = (cur<total) ? `<a href="#" data-jump="last" class="last">最後のページ ≫</a>` : `<a class="disabled">最後のページ ≫</a>`;
 
     const nums = buildPageButtons(cur, total).map(item=>{
       if (item.type==='ellipsis') return `<span class="ellipsis">…</span>`;
@@ -459,7 +438,7 @@ small.note{color:var(--muted)}
           if(!src) return; 
           viewerImg.src = src; 
           viewer.classList.add('show');
-          document.body.classList.add('modal-open');   // 背面スクロール停止
+          document.body.classList.add('modal-open');
         });
       });
     }
@@ -525,7 +504,7 @@ small.note{color:var(--muted)}
   function closeViewer(){
     viewer.classList.remove('show');
     viewerImg.src='';
-    document.body.classList.remove('modal-open');  // スクロール再開
+    document.body.classList.remove('modal-open');
   }
   viewerClose?.addEventListener('click', closeViewer);
   viewer?.addEventListener('click', (e)=>{ if(e.target===viewer) closeViewer(); });
