@@ -4,3 +4,8 @@ credentials.json
 *.secret.json
 ƒJ[ƒhƒ‰ƒbƒVƒ…/
 docs/assets/thumbs/
+Thumbs.db
+desktop.ini
+docs/ãƒ‰ã‚­ãƒ¥ãƒ¡ãƒ³ãƒˆ/
+docs/**/desktop.ini
+docs/**/Kofax*
