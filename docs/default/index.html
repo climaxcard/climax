@@ -279,8 +279,8 @@ small.note{color:var(--muted)}
     _rarity_lat:      normalizeLatin(it.rarity || "")
   }));
 
-  let VIEW=[]; 
-  let page=1; 
+  let VIEW=[];
+  let page=1;
   let currentSort='desc';
 
   function shrinkPrices(root=document){
@@ -353,6 +353,39 @@ small.note{color:var(--muted)}
     imgs.forEach(img=>{ if(!img.src){ img.src = img.getAttribute('data-src'); img.removeAttribute('data-src'); }});
   }
 
+  // ====== 単語マッチ関数（英字1文字の扱いを調整）======
+  function matchField(kana, latin, qK, qL, opts={}){
+    if (!qK && !qL) return true;
+
+    // かな側: スペース区切り AND
+    if (qK){
+      const ktoks = qK.split(/\s+/).filter(Boolean);
+      for (const t of ktoks){
+        if (!kana.includes(t)) return false;
+      }
+    }
+
+    // ラテン側: 2文字以上は AND で部分一致。1文字は name(latin) または codeLatin に含まれていれば許可
+    if (qL){
+      const ltoks = (qL.match(/[a-z0-9]+/g) || []);
+      const big   = ltoks.filter(t => t.length >= 2);
+      const small = ltoks.filter(t => t.length === 1);
+
+      for (const t of big){
+        if (!latin.includes(t)) return false;
+      }
+
+      if (small.length){
+        const codeLatin = (opts.codeLatin || '');
+        for (const s of small){
+          // ★修正点：latin か codeLatin のどちらかに含まれていればOK（以前は codeLatin 必須）
+          if (!(latin.includes(s) || codeLatin.includes(s))) return false;
+        }
+      }
+    }
+    return true;
+  }
+
   function apply(){
     const qNameK   = normalizeForSearch(nameQ.value||'');
     const qCodeK   = normalizeForSearch(codeQ.value||'');
@@ -364,19 +397,12 @@ small.note{color:var(--muted)}
     const qPackL   = normalizeLatin(packQ.value||'');
     const qRarityL = normalizeLatin(rarityQ.value||'');
 
-    const matchEither = (kana, latin, qK, qL) => {
-      if (!qK && !qL) return true;
-      let ok = false;
-      if (qK && kana.includes(qK)) ok = true;
-      if (qL && latin.includes(qL)) ok = true;
-      return ok;
-    };
-
     VIEW = ALL.filter(it =>
-      matchEither(it._name,        it._name_lat,        qNameK,   qNameL)   &&
-      matchEither(it._code,        it._code_lat,        qCodeK,   qCodeL)   &&
-      matchEither(it._packbooster, it._packbooster_lat, qPackK,   qPackL)   &&
-      matchEither(it._rarity,      it._rarity_lat,      qRarityK, qRarityL)
+      // name: 英字1文字は name(latin) か code(latin) のどちらかに含まれていればOK
+      matchField(it._name,        it._name_lat,        qNameK,   qNameL,   { codeLatin: it._code_lat }) &&
+      matchField(it._code,        it._code_lat,        qCodeK,   qCodeL) &&
+      matchField(it._packbooster, it._packbooster_lat, qPackK,   qPackL) &&
+      matchField(it._rarity,      it._rarity_lat,      qRarityK, qRarityL)
     );
 
     if(currentSort==='desc') VIEW.sort((a,b)=>(b.price||0)-(a.price||0));
@@ -459,7 +485,7 @@ small.note{color:var(--muted)}
           if(!src) return; 
           viewerImg.src = src; 
           viewer.classList.add('show');
-          document.body.classList.add('modal-open');   // ← 追加：背面スクロール停止
+          document.body.classList.add('modal-open');   // 背面スクロール停止
         });
       });
     }
@@ -525,7 +551,7 @@ small.note{color:var(--muted)}
   function closeViewer(){
     viewer.classList.remove('show');
     viewerImg.src='';
-    document.body.classList.remove('modal-open');  // ← 追加：スクロール再開
+    document.body.classList.remove('modal-open');  // スクロール再開
   }
   viewerClose?.addEventListener('click', closeViewer);
   viewer?.addEventListener('click', (e)=>{ if(e.target===viewer) closeViewer(); });
