@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 デュエマ買取表 静的ページ生成（完成版・中央タイトル＋ロゴ・数字タブ＋SPは2行ナビ）
 - CSV/Excel 自動対応。二重ヘッダ(日本語/英語キー)も自動正規化
@@ -101,7 +101,6 @@ def _read_csv_auto(path: Path) -> pd.DataFrame:
     return pd.read_csv(path)
 
 def _normalize_two_header_layout(df: pd.DataFrame) -> pd.DataFrame:
-    """二重ヘッダ（2行見出し→英語キー行→データ）を、英語キー行を正式ヘッダに整える。"""
     try:
         cand = []
         m = min(12, len(df))
@@ -114,7 +113,18 @@ def _normalize_two_header_layout(df: pd.DataFrame) -> pd.DataFrame:
         hdr = cand[0]
         start = hdr + 2
         df2 = df.iloc[start:].copy()
-        df2.columns = df.iloc[hdr].tolist()
+        cols = [str(c) if c is not None else "" for c in df.iloc[hdr].tolist()]
+        # 重複列名に .1, .2 … を付与
+        seen = {}
+        uniq = []
+        for c in cols:
+            if c not in seen:
+                seen[c] = 0
+                uniq.append(c)
+            else:
+                seen[c] += 1
+                uniq.append(f"{c}.{seen[c]}")
+        df2.columns = uniq
         return df2.reset_index(drop=True)
     except Exception:
         return df
@@ -155,37 +165,42 @@ def load_buylist_any(path_hint: str, sheet_name: str|None) -> pd.DataFrame:
 df_raw = load_buylist_any(EXCEL_PATH, SHEET_NAME)
 
 # ========= ユーティリティ =========
-SEP_RE = re.compile(r"[\s\u30FB\u00B7·/／\-_—–−]+")
+SEP_RE = re.compile(r"[- \t\u3000\u30FB\u00B7/／_]+")
 
-import pandas as pd
-
-def _as_series(x):
-    """DataFrame やスカラが来ても必ず Series に変換"""
+def _to_series(x) -> pd.Series:
+    """
+    何が来ても Series に矯正する。
+    - DataFrame: 先頭列を採用（複数列ヒット時の安全弁）
+    - Series   : そのまま返す
+    - None     : 空 Series
+    - list等   : Series化
+    """
+    import pandas as pd
+    if isinstance(x, pd.DataFrame):
+        if x.shape[1] >= 1:
+            return x.iloc[:, 0]
+        return pd.Series([], dtype=object)
     if isinstance(x, pd.Series):
         return x
-    if isinstance(x, pd.DataFrame):
-        return x.iloc[:, 0] if x.shape[1] else pd.Series(dtype=object)
-    if isinstance(x, (list, tuple)):
+    if x is None:
+        return pd.Series([], dtype=object)
+    try:
         return pd.Series(x)
-    return pd.Series([x])
+    except Exception:
+        return pd.Series([x])
 
 def clean_text(s) -> pd.Series:
-    print("[DEBUG] clean_text input type:", type(s))  # デバッグログ
-    s = _as_series(s).astype(str)
+    s = _to_series(s).astype(str)
     s = s.str.replace(r'(?i)^\s*nan\s*$', '', regex=True)
-    s = s.str.replace(r'[\u200d\u200c\ufeff\u00a0]', '', regex=True)
-    return s.str.strip()
-
-
-
+    s = s.replace({"nan":"","NaN":"","None":"","NONE":"","null":"","NULL":"","nil":"","NIL":""})
+    return s.fillna("").str.strip()
 
 def to_int_series(s) -> pd.Series:
-    s = _as_series(s)
+    s = _to_series(s)
+    import pandas as pd
     if pd.api.types.is_numeric_dtype(s):
         return pd.to_numeric(s, errors="coerce").round().astype("Int64")
-    s = (s.astype(str)
-           .str.replace(r"[^\d\.\-,]", "", regex=True)
-           .str.replace(",", "", regex=False))
+    s = s.astype(str).str.replace(r"[^\d\.\-,]", "", regex=True).str.replace(",", "", regex=False)
     return pd.to_numeric(s, errors="coerce").round().astype("Int64")
 
 
@@ -236,15 +251,21 @@ def searchable_row_py(row: pd.Series) -> str:
 
 # ========= 列アクセス =========
 def get_col(df: pd.DataFrame, names: list[str], fallback_idx: int|None):
+    # 1) 完全一致
     for nm in names:
         if nm in df.columns:
-            col = df[nm]
-            if isinstance(col, pd.DataFrame):      # ← 重複ヘッダでDataFrameになるケース
-                return col.iloc[:, 0]              #    先頭列を採用
-            return col                              # Series
-    if fallback_idx is not None and 0 <= fallback_idx < df.shape[1]:
-        return df.iloc[:, fallback_idx]
+            return _to_series(df[nm])
+        # 2) "rarity" と "rarity.1" のような派生（重複列）も拾う
+        matches = [c for c in df.columns if str(c).split(".")[0] == nm]
+        if matches:
+            col = df[matches] if len(matches) > 1 else df[matches[0]]
+            return _to_series(col)
+    # 3) 位置フォールバック（0始まり）
+    if fallback_idx is not None and fallback_idx < df.shape[1]:
+        return _to_series(df.iloc[:, fallback_idx])
+    # 4) なければ空 Series（長さは df に合わせる）
     return pd.Series([""]*len(df), index=df.index)
+
 
 S_NAME   = get_col(df_raw, ["display_name","商品名"],            IDX_NAME)
 S_PACK   = get_col(df_raw, ["expansion","エキスパンション"],      IDX_PACK)
@@ -256,15 +277,14 @@ S_IMGURL = get_col(df_raw, ["allow_auto_print_label","画像URL"],  IDX_IMGURL)
 
 # ========= データ整形 =========
 df = pd.DataFrame({
-    "name":    clean_text(_as_series(S_NAME)),
-    "pack":    clean_text(_as_series(S_PACK)),
-    "code":    clean_text(_as_series(S_CODE)),
-    "rarity":  clean_text(_as_series(S_RARITY)),
-    "booster": clean_text(_as_series(S_BOOST)),
-    "price":   to_int_series(_as_series(S_PRICE)) if len(S_PRICE) else pd.Series([None]*len(df_raw)),
-    "image":   clean_text(_as_series(S_IMGURL)).map(detail_to_img),
+    "name":    clean_text(S_NAME),
+    "pack":    clean_text(S_PACK),
+    "code":    clean_text(S_CODE),
+    "rarity":  clean_text(S_RARITY),
+    "booster": clean_text(S_BOOST),
+    "price":   to_int_series(S_PRICE) if len(S_PRICE) else pd.Series([None]*len(df_raw)),
+    "image":   clean_text(S_IMGURL).map(detail_to_img),
 })
-
 df = df[~df["name"].str.match(r"^Unnamed", na=False)]
 df = df[df["name"].str.strip()!=""].reset_index(drop=True)
 df["s"] = df.apply(searchable_row_py, axis=1)
