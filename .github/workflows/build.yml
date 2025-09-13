@@ -7,7 +7,7 @@ on:
   push:
     branches: [ main ]
     paths:
-      - "gen_buylist.py"
+      - "generate_buylist.py"
       - "fetch_sheet_sa.py"
       - ".github/workflows/build.yml"
 
@@ -51,7 +51,7 @@ jobs:
           PER_PAGE: "80"
           BUILD_THUMBS: "0"
         run: |
-          python gen_buylist.py
+          python generate_buylist.py
 
       - name: Commit & Push changes (if any)
         run: |
