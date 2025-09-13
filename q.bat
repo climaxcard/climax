@@ -7,10 +7,10 @@ set "OUT_DIR=docs"
 set "PER_PAGE=80"
 set "BUILD_THUMBS=0"
 
-rem 引数にExcelフルパスを渡せます。未指定なら gen_buylist.py が自動検出
+rem 引数にExcelフルパスを渡せます。未指定なら generate_buylist.py が自動検出
 if not "%~1"=="" set "EXCEL_PATH=%~1"
 
-"%PY%" gen_buylist.py || goto :fail
+"%PY%" generate_buylist.py || goto :fail
 start "" ".\docs\default\index.html"
 exit /b 0
 

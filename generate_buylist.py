@@ -1,9 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-デュエマ買取表 静的ページ生成（xlsx専用・完成版）
-- 入力は Excel の .xlsx/.xlsm/.xls のみ（URL/CSV対応は外しています）
-- 0件対策：まず header=0（1行ヘッダ想定）で読む → ダメなら救済（header=None → 2重ヘッダ検出）
-- 二重ヘッダ(日本語/英語キー)自動正規化（display_name / cardnumber など / 商品名 / カード番号）
+デュエマ買取表 静的ページ生成（完成版・中央タイトル＋ロゴ・数字タブ＋SPは2行ナビ）
+- CSV/Excel 自動対応。二重ヘッダ(日本語/英語キー)も自動正規化
 - 列は「ヘッダ名優先 → 位置フォールバック(C/E/F/G/H/O/Q)」
 - 画像URLは Q列系（allow_auto_print_label 等）最優先。=IMAGE() 抽出にも対応
 - 画像ON時は「カード名＋型番＋買取価格のみ」表示（スマホ最適化：型番はバッジ・nowrap）
@@ -17,7 +15,7 @@ from urllib.parse import urlparse, parse_qs
 import pandas as pd
 import html as html_mod
 import unicodedata as ud
-import base64, mimetypes, os, sys, hashlib, io, json, re, glob, zipfile
+import base64, mimetypes, os, sys, hashlib, io, json, re, glob
 
 # ==== 依存（BUILD_THUMBS=1 の場合のみ使う）====
 try:
@@ -30,9 +28,9 @@ except Exception:
 # ========= 設定 =========
 DEFAULT_EXCEL = "buylist.xlsx"
 ALT_EXCEL     = "data/buylist.xlsx"
-FALLBACK_WINDOWS = r"C:\Users\user\OneDrive\Desktop\デュエマ買取表\buylist.xlsx"
+FALLBACK_WINDOWS = r"C:\Users\user\Desktop\デュエマ買取表\buylist.xlsx"
 
-# xlsxのみ想定
+# 入力は CSV/Excel 自動検出
 EXCEL_PATH = os.getenv("EXCEL_PATH", DEFAULT_EXCEL)
 SHEET_NAME = os.getenv("SHEET_NAME", "シート1")
 
@@ -93,29 +91,28 @@ def logo_to_data_uri(p: Path|None) -> str:
 
 LOGO_URI = logo_to_data_uri(find_logo_path())
 
-# ========= 入力ファイル 読み込み・正規化（xlsx専用） =========
+# ========= 入力ファイル 読み込み・正規化（CSV/Excel自動対応） =========
+def _read_csv_auto(path: Path) -> pd.DataFrame:
+    for enc in ("utf-8-sig", "cp932", "utf-8"):
+        try:
+            return pd.read_csv(path, encoding=enc)
+        except Exception:
+            pass
+    return pd.read_csv(path)
 
 def _normalize_two_header_layout(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    二重ヘッダ（見出し行がついていて、その下にキー行がある）を、キー行で正式ヘッダに整える。
-    英語: display_name / cardnumber
-    日本語: 商品名 / カード番号
-    """
+    """二重ヘッダ（2行見出し→英語キー行→データ）を、英語キー行を正式ヘッダに整える。"""
     try:
         cand = []
         m = min(12, len(df))
         for i in range(m):
             row = df.iloc[i].astype(str).tolist()
-            rowl = [s.strip() for s in row]
-            if (
-                ("display_name" in rowl and "cardnumber" in rowl) or
-                ("商品名" in rowl and "カード番号" in rowl)
-            ):
+            if "display_name" in row and "cardnumber" in row:
                 cand.append(i)
         if not cand:
             return df
         hdr = cand[0]
-        start = hdr + 1  # ヘッダ直下からデータ（一般的なケース）
+        start = hdr + 2
         df2 = df.iloc[start:].copy()
         df2.columns = df.iloc[hdr].tolist()
         return df2.reset_index(drop=True)
@@ -123,10 +120,9 @@ def _normalize_two_header_layout(df: pd.DataFrame) -> pd.DataFrame:
         return df
 
 def _resolve_input(pref: str|None) -> Path:
-    # xlsx/xlsm/xls をローカルのみ探索
     cands = []
     if pref: cands.append(Path(pref))
-    cands += [Path("buylist.xlsx"), Path(ALT_EXCEL), Path(FALLBACK_WINDOWS)]
+    cands += [Path("buylist.csv"), Path("buylist.xlsx"), Path(ALT_EXCEL), Path(FALLBACK_WINDOWS)]
     for p in cands:
         try:
             if p.exists() and p.is_file():
@@ -134,63 +130,27 @@ def _resolve_input(pref: str|None) -> Path:
         except Exception:
             pass
     files = sorted(
-        [Path(p) for p in glob.glob("*.xlsx")] + [Path(p) for p in glob.glob("*.xlsm")] + [Path(p) for p in glob.glob("*.xls")],
+        [Path(p) for p in glob.glob("*.csv")] + [Path(p) for p in glob.glob("*.xlsx")],
         key=lambda x: x.stat().st_mtime, reverse=True
     )
     if files: return files[0]
-    raise FileNotFoundError("Excel(.xlsx/.xlsm/.xls) が見つかりません。")
+    raise FileNotFoundError("CSV/Excel が見つかりません。")
 
 def load_buylist_any(path_hint: str, sheet_name: str|None) -> pd.DataFrame:
-    """
-    ローカルの xlsx/xlsm/xls のみを読み込む。
-    - まず header=0 で読み、期待ヘッダがあればそのまま
-    - 無ければ救済: header=None → 二重ヘッダ正規化
-    """
     p = _resolve_input(path_hint)
-
-    # .xlsx / .xlsm
-    if isinstance(p, Path) and p.suffix.lower() in (".xlsx", ".xlsm"):
-        # 先に header=0（通常の1行ヘッダ）
-        try:
-            if sheet_name:
-                df0 = pd.read_excel(p, sheet_name=sheet_name, header=0, engine="openpyxl")
-            else:
-                xls = pd.ExcelFile(p, engine="openpyxl")
-                df0 = pd.read_excel(xls, sheet_name=xls.sheet_names[0], header=0, engine="openpyxl")
-            cols = set(map(str, df0.columns))
-            expect_any = {
-                "display_name", "cardnumber", "buy_price", "allow_auto_print_label",
-                "商品名", "カード番号", "買取価格", "画像URL"
-            }
-            if cols & expect_any:
-                return _normalize_two_header_layout(df0)
-        except Exception:
-            pass
-
-        # 救済：header=None → 2重ヘッダ検出
-        try:
-            if sheet_name:
-                df0 = pd.read_excel(p, sheet_name=sheet_name, header=None, engine="openpyxl")
-            else:
-                xls = pd.ExcelFile(p, engine="openpyxl")
-                df0 = pd.read_excel(xls, sheet_name=xls.sheet_names[0], header=None, engine="openpyxl")
-        except zipfile.BadZipFile:
-            raise RuntimeError("buylist.xlsx の中身が壊れています。Excelで開いて .xlsx として保存し直してください。")
+    if p.suffix.lower()==".csv":
+        df0 = _read_csv_auto(p)
         return _normalize_two_header_layout(df0)
-
-    # .xls（旧形式）
-    if isinstance(p, Path) and p.suffix.lower()==".xls":
-        try:
-            df0 = pd.read_excel(p, sheet_name=(sheet_name or 0), header=0, engine="xlrd")
-            cols = set(map(str, df0.columns))
-            if cols & {"display_name","cardnumber","商品名","カード番号"}:
-                return _normalize_two_header_layout(df0)
-        except Exception:
-            pass
-        df0 = pd.read_excel(p, sheet_name=(sheet_name or 0), header=None, engine="xlrd")
-        return _normalize_two_header_layout(df0)
-
-    raise RuntimeError("未対応の拡張子です。xlsx/xlsm/xls のみ対応。")
+    try:
+        if sheet_name:
+            df0 = pd.read_excel(p, sheet_name=sheet_name, header=None, engine="openpyxl")
+        else:
+            xls = pd.ExcelFile(p, engine="openpyxl")
+            df0 = pd.read_excel(xls, sheet_name=xls.sheet_names[0], header=None, engine="openpyxl")
+    except Exception:
+        xls = pd.ExcelFile(p, engine="openpyxl")
+        df0 = pd.read_excel(xls, sheet_name=xls.sheet_names[0], header=None, engine="openpyxl")
+    return _normalize_two_header_layout(df0)
 
 df_raw = load_buylist_any(EXCEL_PATH, SHEET_NAME)
 
@@ -440,13 +400,14 @@ input.search:focus{ box-shadow:0 0 0 2px rgba(17,24,39,.08) }
   position:absolute; top:-12px; right:-12px; background:#fff; border:1px solid var(--border); color:#111;
   border-radius:999px; width:38px; height:38px; cursor:pointer;
 }
+/* ビューワ表示中は背面スクロール停止 */
 body.modal-open{ overflow:hidden; }
 
-/* ===== ページネーション ===== */
+/* ===== ページネーション（PC=左/中央/右、SP=2行） ===== */
 nav.simple{ margin:14px 0; }
 nav.simple .pager{
   display:grid;
-  grid-template-columns:auto 1fr auto;
+  grid-template-columns:auto 1fr auto; /* 左 / 中央 / 右 */
   align-items:center;
   gap:12px;
 }
@@ -468,7 +429,7 @@ nav.simple .num[aria-current="page"]{
 }
 nav.simple .ellipsis{border:none;background:transparent;cursor:default;padding:0 4px}
 
-/* SP二段 */
+/* SP二段（上：数字／下：最初・前・次・最後） */
 nav.simple .controls-mobile{ display:none; }
 
 /* ======== SP 調整 ======== */
@@ -476,18 +437,21 @@ nav.simple .controls-mobile{ display:none; }
   nav.simple .pager{
     display:flex; flex-direction:column; gap:6px;
   }
-  nav.simple .left, nav.simple .right{ display:none; }
+  nav.simple .left, nav.simple .right{ display:none; } /* PC用左右は隠す */
+
+  /* 数字：横スクロール＋端見切れ防止 */
   nav.simple .center{
     order:1; justify-content:center; flex-wrap:nowrap; overflow-x:auto; max-width:100%;
     -webkit-overflow-scrolling: touch;
-    padding-inline:10px;
-    scroll-padding-inline:10px;
+    padding-inline:10px;             /* 端の数字が切れない */
+    scroll-padding-inline:10px;      /* スクロール末端での見切れ防止 */
     gap:6px;
   }
   nav.simple .center::-webkit-scrollbar{ display:none; }
   nav.simple .center .num,
   nav.simple .center .ellipsis{ flex:0 0 auto; }
 
+  /* 2行目：最初/前/次/最後（文言変更なし / 見切れ防止） */
   nav.simple .controls-mobile{
     order:2; display:flex; flex-wrap:nowrap; justify-content:center;
     gap:4px; padding:0 6px; max-width:100%; overflow:hidden;
@@ -498,7 +462,7 @@ nav.simple .controls-mobile{ display:none; }
   }
 }
 
-/* ===== SPレイアウト ===== */
+/* ===== SPレイアウト（ヘッダ2段等） ===== */
 @media (max-width:700px){
   :root{ --header-h: 144px; }
   .header-wrap{
@@ -611,7 +575,7 @@ base_js = r"""
   if (!ALL.length) {
     const hint = document.createElement('p');
     hint.style.cssText='color:#dc2626;padding:10px;margin:10px;border:1px dashed #fecaca;background:#fff5f5';
-    hint.textContent = 'データが0件です。入力Excelのヘッダと列位置を確認してください。';
+    hint.textContent = 'データが0件です。入力CSV/Excelのヘッダと列位置を確認してください。';
     document.querySelector('main')?.prepend(hint);
   }
 
@@ -627,8 +591,8 @@ base_js = r"""
     _rarity_lat:      normalizeLatin(it.rarity || "")
   }));
 
-  let VIEW=[]; 
-  let page=1; 
+  let VIEW=[];
+  let page=1;
   let currentSort=__INITIAL_SORT__;
 
   function shrinkPrices(root=document){
@@ -701,6 +665,39 @@ base_js = r"""
     imgs.forEach(img=>{ if(!img.src){ img.src = img.getAttribute('data-src'); img.removeAttribute('data-src'); }});
   }
 
+  // ====== 単語マッチ関数（英字1文字の扱いを調整）======
+  function matchField(kana, latin, qK, qL, opts={}){
+    if (!qK && !qL) return true;
+
+    // かな側: スペース区切り AND
+    if (qK){
+      const ktoks = qK.split(/\s+/).filter(Boolean);
+      for (const t of ktoks){
+        if (!kana.includes(t)) return false;
+      }
+    }
+
+    // ラテン側: 2文字以上は AND で部分一致。1文字は name(latin) または codeLatin に含まれていれば許可
+    if (qL){
+      const ltoks = (qL.match(/[a-z0-9]+/g) || []);
+      const big   = ltoks.filter(t => t.length >= 2);
+      const small = ltoks.filter(t => t.length === 1);
+
+      for (const t of big){
+        if (!latin.includes(t)) return false;
+      }
+
+      if (small.length){
+        const codeLatin = (opts.codeLatin || '');
+        for (const s of small){
+          // ★修正点：latin か codeLatin のどちらかに含まれていればOK（以前は codeLatin 必須）
+          if (!(latin.includes(s) || codeLatin.includes(s))) return false;
+        }
+      }
+    }
+    return true;
+  }
+
   function apply(){
     const qNameK   = normalizeForSearch(nameQ.value||'');
     const qCodeK   = normalizeForSearch(codeQ.value||'');
@@ -712,19 +709,12 @@ base_js = r"""
     const qPackL   = normalizeLatin(packQ.value||'');
     const qRarityL = normalizeLatin(rarityQ.value||'');
 
-    const matchEither = (kana, latin, qK, qL) => {
-      if (!qK && !qL) return true;
-      let ok = false;
-      if (qK && kana.includes(qK)) ok = true;
-      if (qL && latin.includes(qL)) ok = true;
-      return ok;
-    };
-
     VIEW = ALL.filter(it =>
-      matchEither(it._name,        it._name_lat,        qNameK,   qNameL)   &&
-      matchEither(it._code,        it._code_lat,        qCodeK,   qCodeL)   &&
-      matchEither(it._packbooster, it._packbooster_lat, qPackK,   qPackL)   &&
-      matchEither(it._rarity,      it._rarity_lat,      qRarityK, qRarityL)
+      // name: 英字1文字は name(latin) か code(latin) のどちらかに含まれていればOK
+      matchField(it._name,        it._name_lat,        qNameK,   qNameL,   { codeLatin: it._code_lat }) &&
+      matchField(it._code,        it._code_lat,        qCodeK,   qCodeL) &&
+      matchField(it._packbooster, it._packbooster_lat, qPackK,   qPackL) &&
+      matchField(it._rarity,      it._rarity_lat,      qRarityK, qRarityL)
     );
 
     if(currentSort==='desc') VIEW.sort((a,b)=>(b.price||0)-(a.price||0));
@@ -733,26 +723,43 @@ base_js = r"""
     page=1; render();
   }
 
+  // ページ番号：PC=前後3 / SP=前後2
   function buildPageButtons(cur, total){
     const around = matchMedia('(max-width: 700px)').matches ? 2 : 3;
     const btns = [];
     btns.push({type:'num', page:1});
+
     const start = Math.max(2, cur - around);
     const end   = Math.min(total - 1, cur + around);
+
     if (start > 2) btns.push({type:'ellipsis'});
     for (let p = start; p <= end; p++){
       if (p >= 2 && p <= total-1) btns.push({type:'num', page:p});
     }
     if (end < total - 1) btns.push({type:'ellipsis'});
+
     if (total > 1) btns.push({type:'num', page:total});
     return btns;
   }
 
+  // PC：左(最初/前) | 中央(数字) | 右(次/最後)
+  // SP：上(数字) / 下(最初 前 次 最後)
   function renderPager(cur, total){
-    const first = (cur>1) ? `<a href="#" data-jump="first" class="first">≪ 最初のページ</a>` : `<a class="disabled">≪ 最初のページ</a>`;
-    const prev  = (cur>1) ? `<a href="#" data-jump="prev"  class="prev">← 前のページ</a>`  : `<a class="disabled">← 前のページ</a>`;
-    const next  = (cur<total) ? `<a href="#" data-jump="next" class="next">次のページ →</a>` : `<a class="disabled">次のページ →</a>`;
-    const last  = (cur<total) ? `<a href="#" data-jump="last" class="last">最後のページ ≫</a>` : `<a class="disabled">最後のページ ≫</a>`;
+    const first = (cur>1)
+      ? `<a href="#" data-jump="first" class="first">≪ 最初のページ</a>`
+      : `<a class="disabled">≪ 最初のページ</a>`;
+
+    const prev = (cur>1)
+      ? `<a href="#" data-jump="prev" class="prev">← 前のページ</a>`
+      : `<a class="disabled">← 前のページ</a>`;
+
+    const next = (cur<total)
+      ? `<a href="#" data-jump="next" class="next">次のページ →</a>`
+      : `<a class="disabled">次のページ →</a>`;
+
+    const last = (cur<total)
+      ? `<a href="#" data-jump="last" class="last">最後のページ ≫</a>`
+      : `<a class="disabled">最後のページ ≫</a>`;
 
     const nums = buildPageButtons(cur, total).map(item=>{
       if (item.type==='ellipsis') return `<span class="ellipsis">…</span>`;
@@ -790,7 +797,7 @@ base_js = r"""
           if(!src) return; 
           viewerImg.src = src; 
           viewer.classList.add('show');
-          document.body.classList.add('modal-open');
+          document.body.classList.add('modal-open');   // 背面スクロール停止
         });
       });
     }
@@ -856,7 +863,7 @@ base_js = r"""
   function closeViewer(){
     viewer.classList.remove('show');
     viewerImg.src='';
-    document.body.classList.remove('modal-open');
+    document.body.classList.remove('modal-open');  // スクロール再開
   }
   viewerClose?.addEventListener('click', closeViewer);
   viewer?.addEventListener('click', (e)=>{ if(e.target===viewer) closeViewer(); });
@@ -934,15 +941,7 @@ write_mode("price_asc",  "'asc'",  "デュエマ買取表（price_asc）")
 # ルートは default/ にリダイレクト
 (OUT_DIR / "index.html").write_text("<meta http-equiv='refresh' content='0; url=default/'>", encoding="utf-8")
 
-# （任意）簡易デバッグ出力
-try:
-    print(f"[*] rows={len(df_raw)}, cols={df_raw.shape[1]}")
-    print("[*] head cols:", list(map(str, df_raw.columns))[:12])
-except Exception:
-    pass
-
-print(f"[*] Excel: {EXCEL_PATH!r}")
-print(f"[*] SHEET_NAME={SHEET_NAME!r}")
+print(f"[*] Excel/CSV: {EXCEL_PATH!r}")
 print(f"[*] PER_PAGE={PER_PAGE}  BUILD_THUMBS={'1' if BUILD_THUMBS else '0'}")
 print(f"[LOGO] {'embedded' if LOGO_URI else 'not found (fallback text used)'}")
 print(f"[OK] 生成完了 → {OUT_DIR.resolve()} / 総件数{len(df)}")
