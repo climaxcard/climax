@@ -38,7 +38,7 @@ jobs:
       - name: Fetch Google Sheet (Service Account)
         env:
           GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
-          SHEET_ID: "<YOUR_SHEET_ID>"      # 例: 1_jasVTEeD_6sQvLteZ3IpFPXj26gZX0zdNx8DdA-Dk
+          SHEET_ID: "<1_jasVTEeD_6sQvLteZ3IpFPXJz16gZX0dzNx8DdA-Dk>"     
           SHEET_NAME: "シート1"             # 実際のタブ名に合わせる
           OUT_XLSX: "buylist.xlsx"
         run: |
