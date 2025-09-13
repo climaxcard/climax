@@ -52,3 +52,4 @@ df = pd.DataFrame.from_records(recs, columns=[
 with pd.ExcelWriter(OUT_XLSX, engine="openpyxl") as w:
     df.to_excel(w, index=False, sheet_name="シート1")
 print(f"[OK] Downloaded -> {OUT_XLSX}  rows={len(df)}  sheet='{SHEET_NAME}'")
+
