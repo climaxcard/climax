@@ -8,11 +8,15 @@ on:
     branches: [ main ]
     paths:
       - "generate_buylist.py"
-      - "fetch_sheet_sa.py"
       - ".github/workflows/build.yml"
 
 permissions:
   contents: write
+
+# 同時実行が重ならないように（任意）
+concurrency:
+  group: build-pages
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -22,7 +26,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -33,23 +36,20 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install pandas openpyxl numpy \
-                      google-api-python-client google-auth google-auth-httplib2 google-auth-oauthlib
+                      google-api-python-client google-auth google-auth-httplib2 google-auth-oauthlib \
+                      requests pillow
 
-      - name: Fetch Google Sheet (Service Account)
+      # ★ スプシ直読み。fetch_sheet_sa.py は不要
+      - name: Generate site (from Google Sheet)
         env:
           GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
-          SHEET_ID: "1_jasVTEeD_6sQvLteZ3IpFPXJz16gZX0dzNx8DdA-Dk"     
-          SHEET_NAME: "シート1"             # 実際のタブ名に合わせる
-          OUT_XLSX: "buylist.xlsx"
-        run: |
-          python fetch_sheet_sa.py
-
-      - name: Generate site
-        env:
-          EXCEL_PATH: buylist.xlsx
+          SHEET_ID:   ${{ vars.SHEET_ID }}
+          SHEET_NAME: ${{ vars.SHEET_NAME }}    # 例: シート1
           OUT_DIR: docs
           PER_PAGE: "80"
           BUILD_THUMBS: "0"
+          LIFF_ID: ${{ vars.LIFF_ID }}
+          OA_ID:   ${{ vars.OA_ID }}
         run: |
           python generate_buylist.py
 
