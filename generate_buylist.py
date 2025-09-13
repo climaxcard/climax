@@ -157,17 +157,37 @@ df_raw = load_buylist_any(EXCEL_PATH, SHEET_NAME)
 # ========= ユーティリティ =========
 SEP_RE = re.compile(r"[\s\u30FB\u00B7·/／\-_—–−]+")
 
-def clean_text(s: pd.Series) -> pd.Series:
-    s = s.astype(str)
-    s = s.str.replace(r'(?i)^\s*nan\s*$', '', regex=True)
-    s = s.replace({"nan":"","NaN":"","None":"","NONE":"","null":"","NULL":"","nil":"","NIL":""})
-    return s.fillna("").str.strip()
+import pandas as pd
 
-def to_int_series(s: pd.Series) -> pd.Series:
+def _as_series(x):
+    """DataFrame やスカラが来ても必ず Series に変換"""
+    if isinstance(x, pd.Series):
+        return x
+    if isinstance(x, pd.DataFrame):
+        return x.iloc[:, 0] if x.shape[1] else pd.Series(dtype=object)
+    if isinstance(x, (list, tuple)):
+        return pd.Series(x)
+    return pd.Series([x])
+
+def clean_text(s) -> pd.Series:
+    print("[DEBUG] clean_text input type:", type(s))  # デバッグログ
+    s = _as_series(s).astype(str)
+    s = s.str.replace(r'(?i)^\s*nan\s*$', '', regex=True)
+    s = s.str.replace(r'[\u200d\u200c\ufeff\u00a0]', '', regex=True)
+    return s.str.strip()
+
+
+
+
+def to_int_series(s) -> pd.Series:
+    s = _as_series(s)
     if pd.api.types.is_numeric_dtype(s):
         return pd.to_numeric(s, errors="coerce").round().astype("Int64")
-    s = s.astype(str).str.replace(r"[^\d\.\-,]", "", regex=True).str.replace(",", "", regex=False)
+    s = (s.astype(str)
+           .str.replace(r"[^\d\.\-,]", "", regex=True)
+           .str.replace(",", "", regex=False))
     return pd.to_numeric(s, errors="coerce").round().astype("Int64")
+
 
 def detail_to_img(val: str) -> str:
     if not isinstance(val, str):
@@ -218,8 +238,11 @@ def searchable_row_py(row: pd.Series) -> str:
 def get_col(df: pd.DataFrame, names: list[str], fallback_idx: int|None):
     for nm in names:
         if nm in df.columns:
-            return df[nm]
-    if fallback_idx is not None and fallback_idx < df.shape[1]:
+            col = df[nm]
+            if isinstance(col, pd.DataFrame):      # ← 重複ヘッダでDataFrameになるケース
+                return col.iloc[:, 0]              #    先頭列を採用
+            return col                              # Series
+    if fallback_idx is not None and 0 <= fallback_idx < df.shape[1]:
         return df.iloc[:, fallback_idx]
     return pd.Series([""]*len(df), index=df.index)
 
@@ -233,14 +256,15 @@ S_IMGURL = get_col(df_raw, ["allow_auto_print_label","画像URL"],  IDX_IMGURL)
 
 # ========= データ整形 =========
 df = pd.DataFrame({
-    "name":    clean_text(S_NAME),
-    "pack":    clean_text(S_PACK),
-    "code":    clean_text(S_CODE),
-    "rarity":  clean_text(S_RARITY),
-    "booster": clean_text(S_BOOST),
-    "price":   to_int_series(S_PRICE) if len(S_PRICE) else pd.Series([None]*len(df_raw)),
-    "image":   clean_text(S_IMGURL).map(detail_to_img),
+    "name":    clean_text(_as_series(S_NAME)),
+    "pack":    clean_text(_as_series(S_PACK)),
+    "code":    clean_text(_as_series(S_CODE)),
+    "rarity":  clean_text(_as_series(S_RARITY)),
+    "booster": clean_text(_as_series(S_BOOST)),
+    "price":   to_int_series(_as_series(S_PRICE)) if len(S_PRICE) else pd.Series([None]*len(df_raw)),
+    "image":   clean_text(_as_series(S_IMGURL)).map(detail_to_img),
 })
+
 df = df[~df["name"].str.match(r"^Unnamed", na=False)]
 df = df[df["name"].str.strip()!=""].reset_index(drop=True)
 df["s"] = df.apply(searchable_row_py, axis=1)
