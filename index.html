@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>カードショップCLIMAX｜買取表トップ</title>
+  <meta name="description" content="カードショップCLIMAXの買取表トップページ。ポケカとデュエマの買取表へ分岐します。" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700;900&display=swap" rel="stylesheet">
+  <style>
+    :root{
+      --brand:#dc2626; /* 赤 */
+      --brand-ink:#fff;
+      --ink:#111;
+      --muted:#6b7280;
+      --bg:#ffffff;
+      --card:#f9fafb;
+      --ring: rgba(220,38,38,.25);
+      --shadow: 0 12px 28px rgba(0,0,0,.12);
+      --radius: 18px;
+    }
+    *{box-sizing:border-box}
+    html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);font-family:"Noto Sans JP",system-ui,-apple-system,Segoe UI,Roboto,"Hiragino Kaku Gothic ProN","Yu Gothic",sans-serif;}
+    a{color:inherit;text-decoration:none}
+    .container{max-width:1080px;margin:0 auto;padding:16px;}
+
+    /* ===== Header ===== */
+    header{position:sticky;top:0;z-index:50;background:rgba(255,255,255,.9);backdrop-filter:saturate(180%) blur(6px);border-bottom:1px solid #eee}
+    .nav{display:flex;align-items:center;gap:12px;}
+    .logo{display:flex;align-items:center;gap:10px;padding:10px 0}
+    .logo .mark{width:40px;height:40px;border-radius:12px;background:var(--brand);display:grid;place-items:center;color:var(--brand-ink);font-weight:900;box-shadow:0 4px 10px rgba(220,38,38,.25)}
+    .logo .name{font-weight:900;letter-spacing:.02em}
+    .spacer{flex:1}
+    .navlinks{display:none;gap:14px;}
+    .navlinks a{padding:8px 10px;border-radius:10px}
+    .navlinks a:hover{background:#f3f4f6}
+    @media (min-width:900px){.navlinks{display:flex}}
+
+    /* ===== Hero ===== */
+    .hero{padding:28px 0 8px}
+    .hero h1{font-size:clamp(22px,3.6vw,36px);line-height:1.15;margin:0 0 8px;font-weight:900}
+    .hero p{margin:0;color:var(--muted)}
+
+    /* ===== CTA row ===== */
+    .cta-row{display:flex;flex-wrap:wrap;gap:10px;margin:14px 0 0}
+    .btn{display:inline-flex;align-items:center;gap:.6em;border-radius:999px;padding:10px 16px;font-weight:700;border:1px solid #eee;background:#fff;box-shadow:0 6px 16px rgba(0,0,0,.06)}
+    .btn.primary{background:var(--brand);color:var(--brand-ink);border-color:transparent}
+    .btn:hover{transform:translateY(-1px)}
+
+    /* ===== Category Cards ===== */
+    .grid{display:grid;grid-template-columns:1fr;gap:14px;margin:18px 0 26px}
+    @media (min-width:720px){.grid{grid-template-columns:1fr 1fr}}
+    .card{position:relative;border-radius:var(--radius);overflow:hidden;background:linear-gradient(180deg,#fff,#fafafa);border:1px solid #eee;box-shadow:var(--shadow)}
+    .card .media{aspect-ratio:16/9;display:grid;place-items:center;background:#fff}
+    .card .media .emoji{font-size:64px}
+    .card .body{padding:16px}
+    .card h2{margin:0 0 6px;font-size:clamp(18px,2.6vw,22px)}
+    .card p{margin:0;color:var(--muted)}
+    .card .actions{display:flex;gap:10px;margin-top:14px}
+    .pill{display:inline-block;background:#111;color:#fff;border-radius:999px;padding:6px 10px;font-size:12px}
+    .tag{background:#f3f4f6;color:#111}
+
+    /* ===== Hours band ===== */
+    .hours{border-radius:var(--radius);border:1px solid #eee;background:#fff;padding:14px 16px;display:grid;gap:8px;box-shadow:var(--shadow)}
+    .hours .title{font-weight:900}
+    .hours .rows{display:grid;grid-template-columns:10em 1fr;row-gap:2px}
+    @media (max-width:900px){.hours .rows{grid-template-columns:7.5em 1fr}}
+
+    /* ===== Footer ===== */
+    footer{margin:28px 0 10px;color:#6b7280;font-size:13px}
+
+    /* ===== Tiny utils ===== */
+    .right{justify-content:flex-end}
+    .muted{color:var(--muted)}
+    .split{display:flex;gap:10px;align-items:center}
+    .split .grow{flex:1}
+    .chip{display:inline-flex;align-items:center;gap:.5em;background:#fff;border:1px solid #eee;border-radius:999px;padding:6px 10px;box-shadow:0 6px 16px rgba(0,0,0,.06)}
+  </style>
+</head>
+<body>
+  <header>
+    <div class="container nav">
+      <a class="logo" href="./">
+        <div class="mark">C</div>
+        <div class="name">カードショップCLIMAX</div>
+      </a>
+      <div class="spacer"></div>
+      <nav class="navlinks">
+        <a href="./index.html">HOME</a>
+        <a href="./events.html">大会・イベント</a>
+        <a href="./storebuy.html">店頭買取</a>
+        <a href="https://climaxcard.github.io/climax2/#buy" target="_blank" rel="noopener">郵送買取</a>
+        <a href="./space.html">デュエルスペース</a>
+        <a href="./access.html">アクセス</a>
+        <a href="https://www.climax-card.jp/" target="_blank" rel="noopener">通販</a>
+        <a href="https://x.com/climax_card" target="_blank" rel="noopener">X</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="hero">
+      <h1>買取表トップ</h1>
+      <p>タイトルを選んでください（最終更新は各ページをご確認ください）。</p>
+      <div class="cta-row">
+        <a class="btn primary" href="#lists">ポケカとデュエマの買取表へ</a>
+        <a class="btn" href="https://climaxcard.github.io/climax2/#buy" target="_blank" rel="noopener">郵送買取のご案内</a>
+      </div>
+    </section>
+
+    <section id="lists" class="grid">
+      <!-- ポケカ -->
+      <article class="card">
+        <a href="./pokemon/" aria-label="ポケカ買取表">
+          <div class="media">
+            <div class="emoji" aria-hidden>🧪</div>
+          </div>
+        </a>
+        <div class="body">
+          <h2>ポケカ買取表</h2>
+          <p>ボックス・シングル・PSA対応。画像ON/OFFや価格ソートに対応。</p>
+          <div class="actions">
+            <a class="btn primary" href="./pokemon/">買取表をみる</a>
+            <span class="pill tag">Pokémon</span>
+          </div>
+        </div>
+      </article>
+
+      <!-- デュエマ -->
+      <article class="card">
+        <a href="./default/" aria-label="デュエマ買取表">
+          <div class="media">
+            <div class="emoji" aria-hidden>🔥</div>
+          </div>
+        </a>
+        <div class="body">
+          <h2>デュエマ買取表</h2>
+          <p>高額カードは厳しめ査定。カートからLINE送信に対応。</p>
+          <div class="actions">
+            <a class="btn primary" href="./default/">買取表をみる</a>
+            <span class="pill tag">Duel Masters</span>
+          </div>
+        </div>
+      </article>
+    </section>
+
+    <!-- 営業時間バンド -->
+    <section class="hours">
+      <div class="split">
+        <div class="title">営業時間 / 買取受付</div>
+        <div class="grow"></div>
+        <div class="chip">※予告なく変更となる場合があります</div>
+      </div>
+      <div class="rows">
+        <div class="label">月～土</div>
+        <div>11:00～20:00</div>
+        <div class="label">日・祝</div>
+        <div>11:00～19:00</div>
+      </div>
+    </section>
+
+    <!-- 取り扱いタイトル（任意） -->
+    <section class="container" style="padding:0;margin-top:18px">
+      <div class="muted" style="font-weight:700;margin:0 0 8px">販売・買取取り扱いタイトル</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <span class="pill">ポケモンカード</span>
+        <span class="pill">デュエル・マスターズ</span>
+        <span class="pill">ワンピース</span>
+        <span class="pill">ヴァイス</span>
+        <span class="pill">MTG</span>
+        <span class="pill">その他</span>
+      </div>
+    </section>
+
+    <!-- アクセス（任意で地図ページへ） -->
+    <section style="margin-top:18px">
+      <div class="split">
+        <div style="font-weight:900">アクセス</div>
+        <div class="grow"></div>
+        <a class="btn" href="./access.html">アクセスページへ</a>
+      </div>
+    </section>
+  </main>
+
+  <footer class="container">
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <div>© <span id="year"></span> カードショップCLIMAX</div>
+      <div class="muted">|</div>
+      <a class="muted" href="https://x.com/climax_card" target="_blank" rel="noopener">X（旧Twitter）</a>
+      <span class="muted">/</span>
+      <a class="muted" href="https://line.me/R/ti/p/@<your_line_id>" target="_blank" rel="noopener">LINE</a>
+    </div>
+  </footer>
+
+  <script>
+    document.getElementById('year').textContent = new Date().getFullYear();
+  </script>
+</body>
+</html>
