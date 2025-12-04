@@ -15,7 +15,7 @@ if not defined GIT (
 
 REM === 設定 ==========================
 set "PY=python"
-set "EXCEL_PATH=C:\Users\user\OneDrive\Desktop\デュエマ買取表\buylist.xlsx"
+set "EXCEL_PATH=C:\Users\user\Desktop\デュエマ買取表\buylist.xlsm"
 set "OUT_DIR=docs"
 REM set "SHEET_NAME=シート1"
 REM set "PER_PAGE=80"
