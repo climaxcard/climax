@@ -6,3 +6,4 @@ __pycache__/
 Mycaアップロード用CSV.csv
 buylist_pages_offline/
 desktop.ini
+*.csv
