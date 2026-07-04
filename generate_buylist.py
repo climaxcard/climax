@@ -26,7 +26,7 @@ except Exception:
     Image = None
 
 # ====== 入力パス ======
-DEFAULT_EXCEL = r"C:\Users\user\Desktop\デュエマ買取表\buylist.xlsm"
+DEFAULT_EXCEL = str(Path(__file__).resolve().parent / "buylist.xlsm")
 ALT_EXCEL     = DEFAULT_EXCEL
 FALLBACK_WINDOWS = DEFAULT_EXCEL
 
@@ -40,6 +40,10 @@ OUT_DIR    = Path(os.getenv("OUT_DIR", "docs"))
 PER_PAGE   = int(os.getenv("PER_PAGE", "80"))
 BUILD_THUMBS = os.getenv("BUILD_THUMBS", "0") == "1"
 
+
+API_JSON_NAME = os.getenv("API_JSON_NAME", "buylist.json")
+BUYLIST_API_URL = os.getenv("BUYLIST_API_URL", "/climax/buylist.json")
+
 LIFF_ID = os.getenv("LIFF_ID", "2007983559-MKopknXd")
 OA_ID   = os.getenv("OA_ID",   "@512nwjvn")
 TAKUHAI_URL = os.getenv("TAKUHAI_URL", "https://climaxcard.github.io/climax2/#buy")
@@ -52,16 +56,18 @@ IG_ICON_FILE_ENV   = os.getenv("IG_ICON_FILE", "").strip()
 TIKTOK_ICON_FILE_ENV = os.getenv("TIKTOK_ICON_FILE", "").strip()
 
 # よく使う固定ディレクトリ（探索用）
+BASE_DIR = Path(__file__).resolve().parent
 FIXED_DIRS = [
-    Path(r"C:\Users\user\OneDrive\Desktop\デュエマ買取表"),
-    Path(r"C:\Users\user\OneDrive\Desktop\デュエマ買取表"),
+    BASE_DIR,
+    BASE_DIR.parent,
     Path.cwd(),
-    Path(__file__).parent if '__file__' in globals() else Path.cwd()
 ]
 
 # 列位置フォールバック（0始まり）
 IDX_NAME, IDX_PACK, IDX_CODE, IDX_RARITY, IDX_BOOST, IDX_PRICE, IDX_IMGURL = 2,4,5,6,7,14,16
+IDX_SUPPLY = 12  # M列
 # P列 = 16列目 → 0始まりで 15
+IDX_SUPPLY = 12  # M列（サプライ判定）
 IDX_PROMO = 15  # P列（チェック/フラグ）
 THUMB_DIR = OUT_DIR / "assets" / "thumbs"
 THUMB_W = 600
@@ -210,6 +216,14 @@ def to_bool_series(s: pd.Series) -> pd.Series:
 
     return s.map(_one)
 
+def to_supply_series(s: pd.Series) -> pd.Series:
+    return s.astype(str).fillna("").str.strip().str.lower().eq("サプライ")
+
+
+
+def to_supply_series(s: pd.Series) -> pd.Series:
+    return s.astype(str).fillna("").str.strip().eq("サプライ")
+
 def detail_to_img(val: str) -> str:
     if not isinstance(val,str): return ""
     s=val.strip().replace("＠","@").replace("＂",'"').replace("＇","'")
@@ -266,10 +280,13 @@ S_RARITY = get_col(df_raw, ["rarity","レアリティ"],               IDX_RARIT
 S_BOOST  = get_col(df_raw, ["pack_name","封入パック","パック名"],  IDX_BOOST)
 S_PRICE  = get_col(df_raw, ["buy_price","買取価格"],             IDX_PRICE)
 S_IMGURL = get_col(df_raw, ["allow_auto_print_label","画像URL"],  IDX_IMGURL)
+S_SUPPLY = get_col(df_raw, ["supply","サプライ","商品カテゴリ","category"], IDX_SUPPLY)
 S_PROMO  = get_col(df_raw, ["promo","強化","チェック","check","flag"], IDX_PROMO)
 
 df = pd.DataFrame({
     "promo":   to_bool_series(S_PROMO),
+    "supply":  to_supply_series(S_SUPPLY),
+    "supply":  to_supply_series(S_SUPPLY),
     "name":    clean_text(S_NAME),
     "pack":    clean_text(S_PACK),
     "code":    clean_text(S_CODE),
@@ -309,17 +326,17 @@ else:            df["thumb"] = ""
 # ====== ペイロード ======
 def build_payload(df: pd.DataFrame) -> Tuple[str, str]:
     # 欠損カラムの補完（priceはNone, promoはFalse, 他は空文字）
-    for c in ["name","pack","code","rarity","booster","price","image","thumb","s","promo"]:
+    for c in ["name","pack","code","rarity","booster","price","image","thumb","s","promo","supply"]:
         if c not in df.columns:
             if c == "price":
                 df[c] = None
-            elif c == "promo":
+            elif c in ("promo", "supply"):
                 df[c] = False
             else:
                 df[c] = ""
 
     records = []
-    for rec in df[["name","pack","code","rarity","booster","price","image","thumb","s","promo"]].to_dict(orient="records"):
+    for rec in df[["name","pack","code","rarity","booster","price","image","thumb","s","promo","supply"]].to_dict(orient="records"):
         # 価格の正規化
         price = rec.get("price", None)
         try:
@@ -338,6 +355,12 @@ def build_payload(df: pd.DataFrame) -> Tuple[str, str]:
             t = str(promo_raw).strip().lower()
             promo = t in {"true","1","yes","y","on","☑","✓","✔","◯","○","レ","済"}
 
+        supply_raw = rec.get("supply")
+        supply = bool(supply_raw)
+
+        supply_raw = rec.get("supply")
+        supply = bool(supply_raw)
+
         records.append({
             "n": rec.get("name",""),
             "p": rec.get("pack",""),
@@ -349,6 +372,7 @@ def build_payload(df: pd.DataFrame) -> Tuple[str, str]:
             "t": rec.get("thumb",""),
             "s": rec.get("s",""),
             "k": 1 if promo else 0,   # ← 強化フラグ
+            "sp": 1 if supply else 0, # ← サプライフラグ
         })
 
     payload = json.dumps(records, ensure_ascii=False, separators=(",",":"))
@@ -357,6 +381,17 @@ def build_payload(df: pd.DataFrame) -> Tuple[str, str]:
 
 
 CARDS_VER, CARDS_JSON = build_payload(df)
+
+def write_api_json(out_dir: Path):
+    payload_obj = {
+        "version": CARDS_VER,
+        "updated_label": UPDATED_LABEL,
+        "items": json.loads(CARDS_JSON),
+    }
+    (out_dir / API_JSON_NAME).write_text(
+        json.dumps(payload_obj, ensure_ascii=False, separators=(",", ":")),
+        encoding="utf-8"
+    )
 
 # ====== CSS ======
 base_css = """
@@ -481,6 +516,69 @@ header{
 .notice-body li{ list-style:disc inside; }
 .notice a{ color:#2563eb; text-decoration:underline; }
 
+.update-notice{
+  max-width: var(--pane-w);
+  width: 100%;
+  margin: 8px auto 12px;
+  padding: 10px 12px;
+  border: 1px solid #fecaca;
+  background: #fff7ed;
+  color: #9a3412;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.update-notice[hidden]{
+  display:none !important;
+}
+.update-notice__text{
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.update-notice__actions{
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.update-notice__btn{
+  border: 1px solid #fdba74;
+  background: #fff;
+  color: #9a3412;
+  border-radius: 10px;
+  padding: 8px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.update-notice__btn--primary{
+  background: #ea580c;
+  border-color: #ea580c;
+  color: #fff;
+}
+
+@media (max-width:700px){
+  .update-notice{
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .update-notice__actions{
+    width: 100%;
+  }
+
+  .update-notice__btn{
+    flex: 1 1 auto;
+    text-align: center;
+  }
+}
+
+
 /* -------- Controls (search) -------- */
 .controls{
   display:grid; grid-template-columns:1fr 1fr; grid-template-areas:"q1 q2" "q3 q4" "acts acts";
@@ -533,6 +631,7 @@ input.search::placeholder{ color:#9ca3af }
 .n .ttl{ flex:1 1 100%; min-width:0; display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
 .n .code{ order:2; margin-top:2px; font-weight:700; font-size:12px; color:#374151; background:#f3f4f6; border:1px solid #e5e7eb; border-radius:8px; padding:1px 6px; white-space:nowrap; }
 .meta{ font-size:12px; color:var(--muted); word-break:break-word }
+.grid.grid-img .meta{ margin:2px 0 8px; font-size:12px; line-height:1.45; color:var(--muted); word-break:break-word }
 
 /* Price & Button */
 .foot{ margin-top:auto; display:flex; flex-direction:column; gap:8px; align-items:center; justify-content:center; }
@@ -562,9 +661,12 @@ nav.simple .ellipsis{ border:none; background:transparent; cursor:default; paddi
   background:rgba(17,24,39,.5); padding:16px;
 }
 .viewer.show,.cart-modal.show{ display:flex; }
-.viewer .vc{ position:relative; max-width:min(960px,95vw); max-height:90vh; background:#fff; border-radius:var(--radius-card); padding:8px; box-shadow:0 10px 30px rgba(0,0,0,.2); }
-#viewerImg{ display:block; max-width:100%; max-height:80vh; height:auto; width:auto; margin:auto; }
+.viewer .vc{ position:relative; max-width:min(960px,95vw); max-height:90vh; background:#fff; border-radius:var(--radius-card); padding:12px; box-shadow:0 10px 30px rgba(0,0,0,.2); overflow:auto; }
+#viewerImg{ display:block; max-width:100%; max-height:70vh; height:auto; width:auto; margin:0 auto; }
 #viewerClose{ position:absolute; top:8px; right:8px; border:1px solid var(--border); background:#fff; border-radius:var(--radius-btn); padding:6px 10px; font-size:14px; cursor:pointer; }
+.viewer-meta{ margin-top:12px; padding-top:12px; border-top:1px solid var(--border); }
+.viewer-meta-name{ font-size:22px; font-weight:900; line-height:1.35; color:#111; margin-bottom:10px; }
+.viewer-meta-row{ font-size:14px; line-height:1.7; color:#374151; }
 
 .cart-sheet{ width:min(680px,96vw); max-height:86vh; background:#fff; color:#111; border:1px solid var(--border); border-radius:var(--radius-card); overflow:hidden; box-shadow:0 12px 40px rgba(0,0,0,.25); display:flex; flex-direction:column; }
 .cart-head{ display:flex; align-items:center; justify-content:space-between; padding:12px 14px; border-bottom:1px solid var(--border); background:#fafafa; }
@@ -769,6 +871,25 @@ button, .btn, .iconbtn, .notice-toggle{ touch-action:manipulation; -webkit-tap-h
     white-space: nowrap !important;
     overflow: hidden !important;
     text-overflow: ellipsis !important;
+  }
+
+  .viewer .vc{
+    width:min(96vw, 640px);
+    padding:10px;
+  }
+
+  #viewerImg{
+    max-height:58vh;
+  }
+
+  .viewer-meta-name{
+    font-size:18px;
+    margin-bottom:8px;
+  }
+
+  .viewer-meta-row{
+    font-size:13px;
+    line-height:1.6;
   }
 }
 
@@ -1015,6 +1136,59 @@ button, .btn, .iconbtn, .notice-toggle{ touch-action:manipulation; -webkit-tap-h
   #grid.grid-list .card .foot{ gap:12px !important; } /* 見た目の余白も少し広げる（任意） */
 }
 
+/* === カート追加トースト === */
+.cart-toast{
+  position:fixed;
+  left:50%;
+  bottom:24px;
+  transform:translateX(-50%) translateY(20px);
+  z-index:3000;
+  background:#111;
+  color:#fff;
+  padding:10px 16px;
+  border-radius:999px;
+  font-size:14px;
+  font-weight:800;
+  box-shadow:0 8px 24px rgba(0,0,0,.22);
+  opacity:0;
+  pointer-events:none;
+  transition:opacity .18s ease, transform .18s ease;
+  white-space:nowrap;
+}
+
+.cart-toast.show{
+  opacity:1;
+  transform:translateX(-50%) translateY(0);
+}
+
+/* === 買取カートボタン：押した感 === */
+.btn-add{
+  transition:
+    transform .12s ease,
+    background .12s ease,
+    color .12s ease,
+    border-color .12s ease,
+    box-shadow .12s ease;
+}
+
+.btn-add.added{
+  background:#e11d48 !important;
+  color:#fff !important;
+  border-color:#e11d48 !important;
+  transform:scale(.94);
+  box-shadow:0 0 0 4px rgba(225,29,72,.16);
+}
+
+@media (max-width:700px){
+  .cart-toast{
+    bottom:18px;
+    font-size:13px;
+    padding:9px 14px;
+    max-width:90vw;
+    overflow:hidden;
+    text-overflow:ellipsis;
+  }
+}
 
 """
 # ===== JS =====
@@ -1051,7 +1225,9 @@ base_js = r"""
   const btnDesc=document.getElementById('btnPriceDesc'), btnAsc=document.getElementById('btnPriceAsc'),
         btnNone=document.getElementById('btnSortClear'), btnImg=document.getElementById('btnToggleImages');
   const btnPromo = document.getElementById('btnPromo');
+  const btnSupply = document.getElementById('btnSupply');
   let promoOnly = false;
+  let supplyOnly = false;
 
   // 追加：最新弾
   const btnLatest = document.getElementById('btnLatest');
@@ -1067,8 +1243,14 @@ base_js = r"""
     btnPromo.classList.toggle('active', promoOnly);
     btnPromo.setAttribute('aria-pressed', promoOnly ? 'true' : 'false');
   }
+  function setSupplyBtn(){
+    if(!btnSupply) return;
+    btnSupply.classList.toggle('active', supplyOnly);
+    btnSupply.setAttribute('aria-pressed', supplyOnly ? 'true' : 'false');
+  }
 
   const viewer=document.getElementById('viewer'), viewerImg=document.getElementById('viewerImg'), viewerClose=document.getElementById('viewerClose');
+  const viewerMeta=document.getElementById('viewerMeta'), viewerName=document.getElementById('viewerName'), viewerPack=document.getElementById('viewerPack'), viewerCode=document.getElementById('viewerCode'), viewerBooster=document.getElementById('viewerBooster');
 
   // Notice toggle
   const noticeBox = document.getElementById('noticeBox');
@@ -1224,6 +1406,43 @@ base_js = r"""
 
     cartList.scrollTop = keepY;
     cartTotal.textContent='合計：'+ totalPrice().toLocaleString() +'円';
+  }
+  let cartToastTimer = null;
+
+  function showCartToast(message){
+    let toast = document.getElementById('cartToast');
+
+    if(!toast){
+      toast = document.createElement('div');
+      toast.id = 'cartToast';
+      toast.className = 'cart-toast';
+      toast.setAttribute('role', 'status');
+      toast.setAttribute('aria-live', 'polite');
+      document.body.appendChild(toast);
+    }
+
+    toast.textContent = message || '買取カートに追加しました';
+    toast.classList.add('show');
+
+    clearTimeout(cartToastTimer);
+    cartToastTimer = setTimeout(() => {
+      toast.classList.remove('show');
+    }, 1400);
+  }
+
+  function flashAddButton(btn){
+    if(!btn) return;
+
+    const oldText = btn.textContent;
+    btn.classList.add('added');
+    btn.textContent = '追加しました！';
+    btn.disabled = true;
+
+    setTimeout(() => {
+      btn.classList.remove('added');
+      btn.textContent = oldText || '買取カートへ';
+      btn.disabled = false;
+    }, 700);
   }
 
   // Modal open/close
@@ -1385,19 +1604,142 @@ function normalizeLatin(s){
   return s;
 }
 
-  // データ
-  function norm(it){ return { name:it.n??it.name??"", pack:it.p??it.pack??"", code:it.c??it.code??"", rarity:it.r??it.rarity??"", booster:it.b??it.booster??"", price:(it.pr??it.price??null), image:it.i??it.image??"", thumb:it.t??it.thumb??"", promo: (it.k===1 || it.k===true) ? 1 : 0, s:it.s??"" }; }
-  let ALL=Array.isArray(window.__CARDS__)?window.__CARDS__.map(norm):[];
-  if(!ALL.length){
-    const hint=document.createElement('p');
-    hint.style.cssText='color:#dc2626;padding:10px;margin:10px;border:1px dashed #fecaca;background:#fff5f5';
-    hint.textContent='データが0件です。入力CSV/Excelのヘッダと列位置を確認してください。';
-    document.querySelector('main')?.prepend(hint);
-  }
-  ALL=ALL.map(it=>({...it,
-    _name:normalizeForSearch(it.name||""), _code:normalizeForSearch(it.code||""), _packbooster:normalizeForSearch([it.pack||"",it.booster||""].join(" ")), _rarity:normalizeForSearch(it.rarity||""),
-    _name_lat:normalizeLatin(it.name||""), _code_lat:normalizeLatin(it.code||""), _packbooster_lat:normalizeLatin([it.pack||"",it.booster||""].join(" ")), _rarity_lat:normalizeLatin(it.rarity||"")
+function norm(it){
+  return {
+    name: it.n ?? it.name ?? "",
+    pack: it.p ?? it.pack ?? "",
+    code: it.c ?? it.code ?? "",
+    rarity: it.r ?? it.rarity ?? "",
+    booster: it.b ?? it.booster ?? "",
+    price: (it.pr ?? it.price ?? null),
+    image: it.i ?? it.image ?? "",
+    thumb: it.t ?? it.thumb ?? "",
+    promo: (it.k === 1 || it.k === true) ? 1 : 0,
+    supply: (it.sp === 1 || it.sp === true) ? 1 : 0,
+    s: it.s ?? ""
+  };
+}
+
+function enrichItems(items){
+  return items.map(it => ({
+    ...it,
+    _name: normalizeForSearch(it.name || ""),
+    _code: normalizeForSearch(it.code || ""),
+    _packbooster: normalizeForSearch([it.pack || "", it.booster || ""].join(" ")),
+    _rarity: normalizeForSearch(it.rarity || ""),
+    _name_lat: normalizeLatin(it.name || ""),
+    _code_lat: normalizeLatin(it.code || ""),
+    _packbooster_lat: normalizeLatin([it.pack || "", it.booster || ""].join(" ")),
+    _rarity_lat: normalizeLatin(it.rarity || "")
   }));
+}
+
+let ALL = [];
+
+function showLoadError(message){
+  const hint = document.createElement('p');
+  hint.style.cssText = 'color:#dc2626;padding:10px;margin:10px;border:1px dashed #fecaca;background:#fff5f5';
+  hint.textContent = message;
+  document.querySelector('main')?.prepend(hint);
+}
+
+function showUpdateNotice(message, nextVersion){
+  const box = document.getElementById('updateNotice');
+  if(!box) return;
+
+  box.hidden = false;
+  box.innerHTML = `
+    <div class="update-notice__text">${message}</div>
+    <div class="update-notice__actions">
+      <button type="button" class="update-notice__btn" id="dismissUpdateNotice">あとで</button>
+      <button type="button" class="update-notice__btn update-notice__btn--primary" id="reloadWithLatest">更新する</button>
+    </div>
+  `;
+
+  document.getElementById('dismissUpdateNotice')?.addEventListener('click', ()=>{
+    box.hidden = true;
+    box.innerHTML = '';
+  });
+
+  document.getElementById('reloadWithLatest')?.addEventListener('click', ()=>{
+    const u = new URL(window.location.href);
+    if (nextVersion) u.searchParams.set('_v', nextVersion);
+    else u.searchParams.set('_v', String(Date.now()));
+    window.location.replace(u.toString());
+  });
+}
+
+async function checkForNewVersion(){
+  try{
+    const apiUrl = window.__BUYLIST_API__;
+    const checkUrl = apiUrl + (apiUrl.includes('?') ? '&' : '?') + 'check=' + Date.now();
+
+    const res = await fetch(checkUrl, {
+      cache: 'no-store'
+    });
+
+    if(!res.ok) return;
+
+    const payload = await res.json();
+    const latestVersion = payload?.version || '';
+    const appVersion = window.__APP_VERSION__ || '';
+
+    if (latestVersion && appVersion && latestVersion !== appVersion) {
+      showUpdateNotice(
+        '新しい買取表があります。サプライ欄や最新データが反映されていない場合は更新してください。',
+        latestVersion
+      );
+    }
+  } catch (e) {
+    console.warn('version check skipped:', e);
+  }
+}
+
+async function loadBuylist(){
+  try {
+    const apiUrl = window.__BUYLIST_API__;
+    const appVersion = window.__APP_VERSION__ || '';
+    const url = apiUrl + (apiUrl.includes('?') ? '&' : '?') + 'v=' + encodeURIComponent(appVersion || 'current');
+
+    const res = await fetch(url, {
+      cache: 'no-cache'
+    });
+
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
+
+    const payload = await res.json();
+    const items = Array.isArray(payload?.items) ? payload.items : [];
+
+    ALL = enrichItems(items.map(norm));
+
+    if (!ALL.length) {
+      showLoadError('データが0件です。APIの返却内容を確認してください。');
+    }
+
+    const updatedEl = document.getElementById('updatedAt');
+    if (updatedEl) {
+      const label = payload?.updated_label || window.__UPDATED_LABEL__ || '';
+      const ver = payload?.version || appVersion || '';
+      updatedEl.textContent = ver ? `${label} / build:${ver}` : label;
+    }
+
+    if (payload?.version && appVersion && payload.version !== appVersion) {
+      showUpdateNotice(
+        '新しい画面データがあります。サプライ欄などを確実に反映するため、ページを更新してください。',
+        payload.version
+      );
+    }
+
+    apply();
+
+    setTimeout(checkForNewVersion, 4000);
+  } catch (err) {
+    console.error('buylist load error:', err);
+    showLoadError('買取データの取得に失敗しました。時間をおいて再度お試しください。');
+  }
+}
 
   // 検索 & ソート
   let VIEW=[], page=1, currentSort=__INITIAL_SORT__;
@@ -1411,6 +1753,7 @@ function normalizeLatin(s){
     const rawName   = nameQ.value||'';
     const nameHasJP = /[\u3040-\u30ff\u3400-\u9fff]/.test(rawName);
     const nameHasEN = /[A-Za-z0-9]/.test(rawName);
+    const LATEST_PACKS = ['DM26RP2'];
 
     VIEW = ALL.filter(it => {
       let okName = true;
@@ -1426,10 +1769,13 @@ function normalizeLatin(s){
       const okCode   = matchEither(it._code,        it._code_lat,        qCodeK,   qCodeL);
       const okPack   = matchEither(it._packbooster, it._packbooster_lat, qPackK,   qPackL);
       const okRarity = matchEither(it._rarity,      it._rarity_lat,      qRarityK, qRarityL);
-      const okLatest = !latestOnly || ((it.pack||'').trim().toUpperCase() === 'DM25-RP3');
+      const okLatest = !latestOnly || LATEST_PACKS.includes(
+  ((it.pack || '').trim().toUpperCase())
+);
 
       return okName && okCode && okPack && okRarity
              && (!promoOnly || it.promo === 1)
+             && (!supplyOnly || it.supply === 1)
              && okLatest;
     });
 
@@ -1503,14 +1849,18 @@ function normalizeLatin(s){
 
         return `
   <article class="card">
-    <div class="th" data-full="${it.image||''}">
+    <div class="th"
+         data-full="${it.image||''}"
+         data-name="${nameEsc}"
+         data-pack="${esc(it.pack || '')}"
+         data-code="${codeEsc}"
+         data-booster="${esc(it.booster || '')}">
       <img alt="${nameEsc}" loading="lazy" decoding="async" width="281" height="374" data-src="${thumb}" src=""
            onerror="this.onerror=null;var p=this.closest('.th');this.src=p?p.getAttribute('data-full'):this.src;">
     </div>
     <div class="b">
       <h3 class="n">
         <span class="ttl">${nameEsc}</span>
-        ${codeEsc ? `<span class="code">${codeEsc}</span>` : ``}
       </h3>
       <div class="foot">
         ${
@@ -1576,13 +1926,38 @@ function normalizeLatin(s){
     if(showImages){
       grid.querySelectorAll('.th').forEach(th=>{
         th.addEventListener('click', (ev)=>{
-          ev.preventDefault(); ev.stopPropagation();
+          ev.preventDefault();
+          ev.stopPropagation();
           document.activeElement?.blur?.();
-          const src = th.getAttribute('data-full') || th.querySelector('img')?.getAttribute('data-src') || th.querySelector('img')?.src || '';
+
+          const src = th.getAttribute('data-full')
+            || th.querySelector('img')?.getAttribute('data-src')
+            || th.querySelector('img')?.src
+            || '';
+
           if(!src) return;
+
+          const name    = th.getAttribute('data-name') || '';
+          const pack    = th.getAttribute('data-pack') || '';
+          const code    = th.getAttribute('data-code') || '';
+          const booster = th.getAttribute('data-booster') || '';
+
           viewerImg.src = src;
+
+          if (viewerName)    viewerName.textContent    = name;
+          if (viewerPack)    viewerPack.textContent    = pack    ? `エキスパンション：${pack}` : '';
+          if (viewerCode)    viewerCode.textContent    = code    ? `型番：${code}` : '';
+          if (viewerBooster) viewerBooster.textContent = booster ? `封入パック：${booster}` : '';
+
+          if (viewerMeta) {
+            const hasMeta = !!(name || pack || code || booster);
+            viewerMeta.hidden = !hasMeta;
+          }
+
           viewer.classList.add('show');
-          viewer.setAttribute('role','dialog'); viewer.setAttribute('aria-modal','true'); viewer.setAttribute('aria-hidden','false');
+          viewer.setAttribute('role','dialog');
+          viewer.setAttribute('aria-modal','true');
+          viewer.setAttribute('aria-hidden','false');
           lockScroll();
           trapFocus(viewer);
           (viewerClose || viewer).focus?.({preventScroll:true});
@@ -1616,6 +1991,8 @@ function normalizeLatin(s){
         else   { cart.push({name, model:code, price, qty:1}); }
 
         saveCart();
+        showCartToast('買取カートに追加しました');
+        flashAddButton(btn);
         setTimeout(()=> busy = false, 120);
       }, {passive:false});
     });
@@ -1663,6 +2040,11 @@ function normalizeLatin(s){
     viewer.setAttribute('aria-hidden','true');
     untrapFocus(viewer);
     viewerImg.src='';
+    if (viewerName) viewerName.textContent='';
+    if (viewerPack) viewerPack.textContent='';
+    if (viewerCode) viewerCode.textContent='';
+    if (viewerBooster) viewerBooster.textContent='';
+    if (viewerMeta) viewerMeta.hidden = true;
     unlockScroll();
   }
   viewerClose?.setAttribute('aria-label','閉じる');
@@ -1745,14 +2127,19 @@ function normalizeLatin(s){
     btnLatest?.addEventListener('click', ()=>{ latestOnly = !latestOnly; setLatestBtn(); apply(); });
     setLatestBtn();
 
-    btnPromo?.addEventListener('click', ()=>{ promoOnly = !promoOnly; setPromoBtn(); apply(); }); setPromoBtn();
+    btnPromo?.addEventListener('click', ()=>{ promoOnly = !promoOnly; setPromoBtn(); apply(); });
+    setPromoBtn();
+
+    btnSupply?.addEventListener('click', ()=>{ supplyOnly = !supplyOnly; setSupplyBtn(); apply(); });
+    setSupplyBtn();
+
     btnDesc?.addEventListener('click', ()=>{ currentSort=(currentSort==='desc')?null:'desc'; setActiveSort(); apply(); });
     btnAsc ?.addEventListener('click', ()=>{ currentSort=(currentSort==='asc' )?null:'asc' ; setActiveSort(); apply(); });
     btnNone?.addEventListener('click', ()=>{ currentSort=null; setActiveSort(); apply(); });
     btnImg ?.addEventListener('click', toggleImages); setImgBtn();
   }
 
-  setActiveSort(); initButtons(); loadCart(); apply();
+  setActiveSort(); initButtons(); loadCart(); loadBuylist();
 })();
 
 // ダブルタップでのズームを全体で抑止（ボタン類のみ）
@@ -1764,7 +2151,7 @@ document.addEventListener('dblclick', (e)=>{
 """
 
 # ===== HTML =====
-def html_page(title: str, js_source: str, logo_uri: str, cards_json: str, updated_text: str = "") -> str:
+def html_page(title: str, js_source: str, logo_uri: str, buylist_api_url: str, updated_text: str = "") -> str:
     shop_svg   = "<svg viewBox='0 0 24 24' aria-hidden='true' fill='currentColor'><path d='M3 9.5V8l2.2-3.6c.3-.5.6-.7 1-.7h11.6c.4 0 .7.2 .9 .6L21 8v1.5c0 1-.8 1.8-1.8 1.8-.9 0-1.6-.6-1.8-1.4-.2 .8-.9 1.4-1.8 1.4s-1.6-.6-1.8-1.4c-.2 .8-.9 1.4-1.8 1.4C3.8 11.3 3 10.5 3 9.5zM5 12.5h14V20c0 .6-.4 1-1 1H6c-.6 0-1-.4-1-1v-7.5zm4 1.5v5h6v-5H9zM6.3 5.2 5 7.5h14l-1.3-2.3H6.3z'/></svg>"
     login_svg  = "<svg viewBox='0 0 24 24' aria-hidden='true' fill='currentColor'><path d='M12 12a5 5 0 1 0-5-5 5 5 0 0 0 5 5zm0 2c-4.418 0-8 2.239-8 5v2h16v-2c0-2.761-3.582-5-8-5z'/></svg>"
     takuhai_svg= "<svg viewBox='0 0 24 24' aria-hidden='true' fill='currentColor'><path d='M3 6h11a2 2 0 0 1 2 2v1h3l2 3v5a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2H8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2Zm0 2v9h2a2 2 0 0 1 2-2h8V8H3Zm16 3h-2v4h4v-3.2L19 11Z'/></svg>"
@@ -1820,7 +2207,7 @@ def html_page(title: str, js_source: str, logo_uri: str, cards_json: str, update
     if TIKTOK_ICON_URI:
         parts.append(
             "<a class='iconimg iconimg--tiktok' "
-            "href='https://www.tiktok.com/@climax932' "
+            "href='https://www.tiktok.com/@climax.card?_r=1&_t=ZS-92xBq1BJbro' "
             "target='_blank' rel='noopener'>"
             f"<img src='{TIKTOK_ICON_URI}' alt='TikTok'></a>"
         )
@@ -1869,19 +2256,26 @@ def html_page(title: str, js_source: str, logo_uri: str, cards_json: str, update
     parts.append("  <div class='btns'>")
     parts.append("    <button id='btnLatest'    class='btn' type='button' aria-pressed='false'>最新弾</button>")
     parts.append("    <button id='btnPromo'     class='btn' type='button' aria-pressed='false'>強化買取中!!</button>")
+    parts.append("    <button id='btnSupply'    class='btn' type='button' aria-pressed='false'>サプライ</button>")
     parts.append("    <button id='btnPriceDesc' class='btn' type='button' aria-pressed='false'>価格高い順</button>")
     parts.append("    <button id='btnPriceAsc'  class='btn' type='button' aria-pressed='false'>価格低い順</button>")
     parts.append("    <button id='btnToggleImages' class='btn' type='button'>画像ON</button>")
     parts.append("  </div></div>")
+    parts.append("  <div id='updateNotice' class='update-notice' hidden></div>")
     parts.append("  <nav class='simple'></nav><div id='grid' class='grid grid-img'></div><nav class='simple'></nav>")
     parts.append("  <small class='note'>画像クリックで拡大。🛒カートから「LINEに送る」でCLIMAX公式LINEへ送信できます（アプリ外でもOK）。</small>")
     parts.append("</main>")
 
     # viewer
-    parts.append("<div id='viewer' class='viewer' tabindex='-1' aria-hidden='true'><div class='vc'><img id='viewerImg' alt='' role='img'><button id='viewerClose' class='close' aria-label='閉じる'>×</button></div></div>")
+    parts.append("<div id='viewer' class='viewer' tabindex='-1' aria-hidden='true'><div class='vc'><img id='viewerImg' alt='' role='img'><button id='viewerClose' class='close' aria-label='閉じる'>×</button><div id='viewerMeta' class='viewer-meta' hidden><div id='viewerName' class='viewer-meta-name'></div><div id='viewerPack' class='viewer-meta-row'></div><div id='viewerCode' class='viewer-meta-row'></div><div id='viewerBooster' class='viewer-meta-row'></div></div></div></div>")
 
     # data
-    parts.append("<script>window.__CARDS__=" + cards_json + ";</script>")
+    parts.append("<script>")
+    parts.append("window.__BUYLIST_API__=" + json.dumps(buylist_api_url, ensure_ascii=False) + ";")
+    parts.append("window.__UPDATED_LABEL__=" + json.dumps(updated_text or "", ensure_ascii=False) + ";")
+    parts.append("window.__APP_VERSION__=" + json.dumps(CARDS_VER, ensure_ascii=False) + ";")
+    parts.append("</script>")
+
     # cart modal  ← 関数内にインデント
     parts.append(
     "<div id='cartModal' class='cart-modal' tabindex='-1' role='dialog' aria-modal='true' aria-hidden='true' aria-label='仮査定カート'>"
@@ -1912,6 +2306,7 @@ def html_page(title: str, js_source: str, logo_uri: str, cards_json: str, update
 
 # ===== 出力 =====
 OUT_DIR.mkdir(parents=True, exist_ok=True)
+write_api_json(OUT_DIR)
 
 def write_mode(dir_name: str, initial_sort_js_literal: str, title_text: str):
     sub = OUT_DIR / dir_name
@@ -1921,7 +2316,7 @@ def write_mode(dir_name: str, initial_sort_js_literal: str, title_text: str):
           .replace("__INITIAL_SORT__", initial_sort_js_literal)
           .replace("__LIFF_ID__", LIFF_ID)
           .replace("__OA_ID__", OA_ID))
-    html = html_page(title_text, js, LOGO_URI, CARDS_JSON, UPDATED_LABEL)
+    html = html_page(title_text, js, LOGO_URI, BUYLIST_API_URL, UPDATED_LABEL)
     (sub/"index.html").write_text(html, encoding="utf-8")
 
 write_mode("default", "'desc'", "デュエマ買取表")
@@ -1936,3 +2331,4 @@ print(f"[LOGO] {'embedded' if LOGO_URI else 'not found (fallback text used)'}")
 print(f"[X ICON] {'embedded' if X_ICON_URI else 'not found'}")
 print(f"[LINE ICON] {'embedded' if LINE_ICON_URI else 'not found'}")
 print(f"[OK] 生成完了 → {OUT_DIR.resolve()} / 総件数{len(df)}")
+

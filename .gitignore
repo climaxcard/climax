@@ -1,3 +1,8 @@
 buylist.xlsm
 
 _backup_before_cleanup_*/
+__pycache__/
+*.pyc
+Mycaアップロード用CSV.csv
+buylist_pages_offline/
+desktop.ini
